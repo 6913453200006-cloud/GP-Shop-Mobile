@@ -29,6 +29,7 @@
             body { background-color: white !important; margin: 0; padding: 0; }
             @page { size: A4; margin: 20mm; }
         }
+        html, body { overflow-x: hidden; max-width: 100vw; }
     </style>
 </head>
 <body class="bg-slate-50 text-gray-900 font-sans">
@@ -309,6 +310,7 @@
                     </div>
 
                     <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                        <div className="overflow-x-auto">
                         <table className="w-full text-left">
                             <thead className="bg-slate-50 text-slate-600 text-sm">
                                 <tr>
@@ -363,6 +365,7 @@
                                 ))}
                             </tbody>
                         </table>
+                        </div>
                     </div>
                 {edit && (
                         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setEdit(null)}>
@@ -455,6 +458,7 @@
                     </div>
 
                     <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                        <div className="overflow-x-auto">
                         <table className="w-full text-left">
                             <thead className="bg-slate-50 text-slate-600 text-sm">
                                 <tr><th className="p-4 border-b">เลขที่บิล</th><th className="p-4 border-b">ลูกค้า</th><th className="p-4 border-b">ข้อมูลเครื่อง/อาการ</th><th className="p-4 border-b">ราคา</th><th className="p-4 border-b">สถานะ</th><th className="p-4 border-b text-center">จัดการ</th></tr>
@@ -482,6 +486,7 @@
                                 ))}
                             </tbody>
                         </table>
+                        </div>
                     </div>
                 </div>
             );
@@ -534,6 +539,7 @@
                     </div>
 
                     <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                        <div className="overflow-x-auto">
                         <table className="w-full text-left">
                             <thead className="bg-slate-50 text-slate-600 text-sm">
                                 <tr>
@@ -574,6 +580,7 @@
                                 )})}
                             </tbody>
                         </table>
+                        </div>
                     </div>
                 </div>
             );
@@ -699,6 +706,7 @@
                     </div>
 
                     <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                        <div className="overflow-x-auto">
                         <table className="w-full text-left">
                             <thead className="bg-slate-50 text-slate-600 text-sm">
                                 <tr><th className="p-4 border-b">วันที่/เวลา</th><th className="p-4 border-b">ประเภท</th><th className="p-4 border-b">รายละเอียด</th><th className="p-4 border-b text-center">จำนวน</th><th className="p-4 border-b text-right">ยอดเงิน (฿)</th></tr>
@@ -714,6 +722,7 @@
                                 ))}
                             </tbody>
                         </table>
+                        </div>
                     </div>
                 </div>
             );
@@ -888,6 +897,7 @@ function doGet(e) {
             const [authState, setAuthState] = useState('login'); 
             const [userRole, setUserRole] = useState('');
             const [activeTab, setActiveTab] = useState('dashboard');
+            const [sidebarOpen, setSidebarOpen] = useState(false);
             const [toastMessage, setToastMessage] = useState('');
             
             // State ควบคุมการพิมพ์ทั้งหมด
@@ -1116,15 +1126,18 @@ function doGet(e) {
                     <div className="print:hidden flex w-full h-full">
                         <Toast message={toastMessage} onClose={() => setToastMessage('')} />
 
+                        {/* พื้นหลังคลิกปิดเมนู (เฉพาะมือถือ) */}
+                        {sidebarOpen && <div className="fixed inset-0 bg-black/50 z-20 md:hidden" onClick={() => setSidebarOpen(false)}></div>}
+
                         {/* Sidebar */}
-                        <aside className="w-64 bg-slate-900 text-white flex flex-col shadow-xl z-20 shrink-0">
+                        <aside className={`fixed md:static inset-y-0 left-0 w-64 bg-slate-900 text-white flex flex-col shadow-xl z-30 shrink-0 transform transition-transform duration-300 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0`}>
                             <div className="h-16 flex items-center px-6 border-b border-slate-800 bg-slate-950">
                                 <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center mr-3 font-bold">GP</div>
                                 <span className="font-bold text-lg">GP Mobile shop</span>
                             </div>
                             <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
                                 {visibleMenus.map(menu => (
-                                    <button key={menu.id} onClick={() => setActiveTab(menu.id)} className={`w-full flex items-center px-4 py-3 rounded-xl transition ${activeTab === menu.id ? 'bg-blue-600 text-white font-bold shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
+                                    <button key={menu.id} onClick={() => { setActiveTab(menu.id); setSidebarOpen(false); }} className={`w-full flex items-center px-4 py-3 rounded-xl transition ${activeTab === menu.id ? 'bg-blue-600 text-white font-bold shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
                                         <i className={`${menu.icon} text-xl w-6 text-center mr-2`}></i> {menu.label}
                                     </button>
                                 ))}
@@ -1141,7 +1154,13 @@ function doGet(e) {
                         </aside>
 
                         {/* Main Content */}
-                        <main className="flex-1 flex flex-col min-w-0">
+                        <main className="flex-1 flex flex-col min-w-0 w-full">
+                            <div className="md:hidden flex items-center h-14 px-4 bg-white border-b shadow-sm shrink-0">
+                                <button onClick={() => setSidebarOpen(true)} className="text-gray-700 w-8 h-8 flex items-center justify-center -ml-1">
+                                    <i className="fas fa-bars text-xl"></i>
+                                </button>
+                                <span className="font-bold text-gray-800 ml-2">{menuItems.find(m => m.id === activeTab)?.label || 'GP Mobile shop'}</span>
+                            </div>
                             <div className="flex-1 overflow-auto p-4 sm:p-6 lg:p-8">
                                 <div className="max-w-7xl mx-auto h-full pb-20">
                                     {activeTab === 'dashboard' && <DashboardTab inventory={inventory} pawns={pawns} repairs={repairs} sales={sales} />}
