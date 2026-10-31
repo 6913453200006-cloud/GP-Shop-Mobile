@@ -40,6 +40,9 @@
     <script type="text/babel">
         const { useState, useEffect } = React;
 
+        // URL ของ Google Apps Script (Web App) สำหรับบันทึก/ดึงข้อมูลอัตโนมัติ
+        const SHEET_API_URL = "https://script.google.com/macros/s/AKfycbztVk2WQOCnl-80_XDUt0ubcPBjuFW8VXSortl3hb1zJGQbgPzuSlBkkAkryiGggJI/exec";
+
         // ==========================================
         // 1. UI Components (Toast)
         // ==========================================
@@ -805,95 +808,10 @@
             );
         };
 
-        // --- 3.8 ตั้งค่าระบบเชื่อมต่อ Google Sheets (Settings) ---
-        const SettingsTab = ({ sheetUrl, setSheetUrl, onSyncTo, onSyncFrom, isSyncing, showToast }) => {
-            const [gasCode] = useState(`function doPost(e) {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("GP_Data");
-  if (!sheet) sheet = SpreadsheetApp.getActiveSpreadsheet().insertSheet("GP_Data");
-  sheet.getRange(1, 1).setValue(e.postData.contents);
-  return ContentService.createTextOutput(JSON.stringify({"status": "success"})).setMimeType(ContentService.MimeType.JSON);
-}
-function doGet(e) {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("GP_Data");
-  var data = sheet ? sheet.getRange(1, 1).getValue() : "{}";
-  return ContentService.createTextOutput(data).setMimeType(ContentService.MimeType.JSON);
-}`);
-
-            const copyCode = () => {
-                navigator.clipboard.writeText(gasCode);
-                showToast("คัดลอกโค้ด Apps Script แล้ว!");
-            };
-
-            return (
-                <div className="space-y-6 max-w-4xl mx-auto">
-                    <h2 className="text-2xl font-bold text-gray-800 flex items-center">
-                        <i className="fas fa-database text-2xl mr-2 text-blue-600"></i> ฐานข้อมูล & Google Sheets
-                    </h2>
-                    
-                    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 space-y-4">
-                        <h3 className="font-bold text-lg border-b pb-2">1. ตั้งค่าการเชื่อมต่อ (API URL)</h3>
-                        <p className="text-sm text-gray-600">ใส่ Web App URL จาก Google Apps Script เพื่อใช้บันทึก/ดึงข้อมูล</p>
-                        <input 
-                            type="text" 
-                            value={sheetUrl} 
-                            onChange={(e) => setSheetUrl(e.target.value)}
-                            placeholder="https://script.google.com/macros/s/AKfycby.../exec"
-                            className="w-full border p-3 rounded-xl text-sm focus:outline-blue-500 bg-slate-50"
-                        />
-                        
-                        <div className="flex gap-4 pt-4">
-                            <button 
-                                onClick={onSyncTo} 
-                                disabled={!sheetUrl || isSyncing}
-                                className="flex-1 bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700 transition disabled:opacity-50 flex items-center justify-center gap-2"
-                            >
-                                {isSyncing ? <i className="fas fa-sync-alt animate-spin text-xl"></i> : <i className="fas fa-cloud text-xl"></i>}
-                                สำรองข้อมูลขึ้น Sheet (Backup)
-                            </button>
-                            <button 
-                                onClick={onSyncFrom} 
-                                disabled={!sheetUrl || isSyncing}
-                                className="flex-1 bg-green-600 text-white font-bold py-3 rounded-xl hover:bg-green-700 transition disabled:opacity-50 flex items-center justify-center gap-2"
-                            >
-                                {isSyncing ? <i className="fas fa-sync-alt animate-spin text-xl"></i> : <i className="fas fa-save text-xl"></i>}
-                                ดึงข้อมูลจาก Sheet (Restore)
-                            </button>
-                        </div>
-                    </div>
-
-                    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 space-y-4 mt-6">
-                        <div className="flex justify-between items-center border-b pb-2">
-                            <h3 className="font-bold text-lg">2. วิธีสร้าง Web App URL บน Google Sheets</h3>
-                            <button onClick={copyCode} className="text-sm bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded flex items-center">
-                                <i className="fas fa-copy mr-1"></i> คัดลอกโค้ด
-                            </button>
-                        </div>
-                        <ol className="list-decimal list-inside text-sm text-gray-600 space-y-2 leading-relaxed">
-                            <li>เปิด Google Sheets ใหม่เปล่าๆ ขึ้นมา 1 ไฟล์</li>
-                            <li>ไปที่เมนู <strong>ส่วนขยาย (Extensions)</strong> &gt; <strong>Apps Script</strong></li>
-                            <li>ลบโค้ดเดิมออกทั้งหมด แล้ววางโค้ดด้านล่างนี้ลงไปแทน:</li>
-                        </ol>
-                        <pre className="bg-slate-900 text-green-400 p-4 rounded-xl text-xs overflow-x-auto font-mono">
-                            {gasCode}
-                        </pre>
-                        <ol className="list-decimal list-inside text-sm text-gray-600 space-y-2 leading-relaxed mt-2" start={4}>
-                            <li>กดบันทึก (ไอคอนแผ่นดิสก์)</li>
-                            <li>กดปุ่ม <strong>การทำให้ใช้งานได้ (Deploy)</strong> &gt; <strong>การทำให้ใช้งานได้รายการใหม่ (New deployment)</strong></li>
-                            <li>เลือกประเภทเป็น <strong>เว็บแอป (Web app)</strong></li>
-                            <li>สิทธิ์การเข้าถึง (Who has access): ให้เลือกเป็น <strong>ทุกคน (Anyone)</strong></li>
-                            <li>กด <strong>การทำให้ใช้งานได้ (Deploy)</strong> (หากระบบให้ยืนยันอีเมล ให้กดยืนยัน Advanced &gt; Go to script)</li>
-                            <li>คัดลอก <strong>Web App URL</strong> นำมาวางในช่องตั้งค่าด้านบน</li>
-                        </ol>
-                    </div>
-                </div>
-            );
-        };
-
         // ==========================================
         // 4. Main Application
         // ==========================================
         function App() {
-            const [sheetUrl, setSheetUrl] = useState(() => localStorage.getItem('gp_sheet_url') || '');
             const [authState, setAuthState] = useState('login'); 
             const [userRole, setUserRole] = useState('');
             const [activeTab, setActiveTab] = useState('dashboard');
@@ -910,18 +828,14 @@ function doGet(e) {
             const [sales, setSales] = useState([]);
 
             const [isSyncing, setIsSyncing] = useState(false);
-
-            useEffect(() => {
-                localStorage.setItem('gp_sheet_url', sheetUrl);
-            }, [sheetUrl]);
+            const [dataLoaded, setDataLoaded] = useState(false);
 
             // ฟังก์ชันส่งข้อมูลขึ้น Google Sheets
             const handleSyncToSheet = async () => {
-                if (!sheetUrl) return showToast("กรุณาตั้งค่า URL ก่อน");
                 setIsSyncing(true);
                 try {
                     const dbData = { inventory, transactions, repairs, pawns, sales };
-                    await fetch(sheetUrl, {
+                    await fetch(SHEET_API_URL, {
                         method: 'POST',
                         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
                         body: JSON.stringify(dbData)
@@ -936,10 +850,9 @@ function doGet(e) {
 
             // ฟังก์ชันดึงข้อมูลจาก Google Sheets
             const handleSyncFromSheet = async () => {
-                if (!sheetUrl) return showToast("กรุณาตั้งค่า URL ก่อน");
                 setIsSyncing(true);
                 try {
-                    const response = await fetch(sheetUrl);
+                    const response = await fetch(SHEET_API_URL);
                     const data = await response.json();
                     if (data && data.inventory) {
                         setInventory(data.inventory || []);
@@ -956,7 +869,20 @@ function doGet(e) {
                     showToast('เกิดข้อผิดพลาดในการดึงข้อมูล');
                 }
                 setIsSyncing(false);
+                setDataLoaded(true);
             };
+
+            // ดึงข้อมูลจาก Google Sheets อัตโนมัติทันทีที่เปิดแอป (ครั้งเดียวตอนโหลด)
+            useEffect(() => {
+                handleSyncFromSheet();
+            }, []);
+
+            // บันทึกข้อมูลขึ้น Google Sheets อัตโนมัติทุกครั้งที่ข้อมูลเปลี่ยนแปลง (ดีเลย์เล็กน้อยกันยิงถี่เกินไป)
+            useEffect(() => {
+                if (!dataLoaded) return;
+                const t = setTimeout(() => { handleSyncToSheet(); }, 1500);
+                return () => clearTimeout(t);
+            }, [inventory, transactions, repairs, pawns, sales]);
 
             // แก้ปัญหาการพิมพ์ - เมื่อปิดหน้าต่างพิมพ์ ให้ล้างค่าอัตโนมัติ
             useEffect(() => {
@@ -995,7 +921,6 @@ function doGet(e) {
                 { id: 'pawn', label: 'ระบบรับจำนำ', icon: 'fas fa-exclamation-circle', role: 'all' },
                 { id: 'crm', label: 'ประวัติลูกค้า', icon: 'fas fa-users', role: 'all' },
                 { id: 'transactions', label: 'บัญชีรายรับ-รายจ่าย', icon: 'fas fa-history', role: 'admin' },
-                { id: 'settings', label: 'ตั้งค่า & ฐานข้อมูล', icon: 'fas fa-cog', role: 'admin' },
             ];
             const visibleMenus = menuItems.filter(m => m.role === 'all' || m.role === userRole);
 
@@ -1170,7 +1095,6 @@ function doGet(e) {
                                     {activeTab === 'crm' && <CRMTab repairs={repairs} pawns={pawns} onPrintRepair={handlePrint} />}
                                     {activeTab === 'transactions' && <TransactionTab transactions={transactions} onPrint={handlePrint} />}
                                     {activeTab === 'pos' && <POSTab inventory={inventory} setInventory={setInventory} addTransaction={addTransaction} addSale={s => setSales([...sales, s])} showToast={showToast} onPrint={handlePrint} />}
-                                    {activeTab === 'settings' && <SettingsTab sheetUrl={sheetUrl} setSheetUrl={setSheetUrl} onSyncTo={handleSyncToSheet} onSyncFrom={handleSyncFromSheet} isSyncing={isSyncing} showToast={showToast} />}
                                 </div>
                             </div>
                         </main>
