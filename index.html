@@ -41,6 +41,25 @@
         const { useState, useEffect } = React;
 
         // URL ของ Google Apps Script (Web App) สำหรับบันทึก/ดึงข้อมูลอัตโนมัติ
+        
+        // ===== ตัวช่วยสมุดบัญชี (ใช้ร่วมกันระหว่างหน้าสมุดบัญชีและ Dashboard) =====
+        const TH_MONTHS = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+        const txDate = (t) => { const d = new Date(t.rawDate || t.id); return isNaN(d) ? new Date() : d; };
+        const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        // เรียงเก่า -> ใหม่ แล้วคำนวณยอดคงเหลือสะสมทุกบรรทัด
+        const buildLedger = (transactions) => {
+            let bal = 0;
+            return transactions
+                .map((t, i) => ({ ...t, _i: i, _d: txDate(t) }))
+                .sort((a, b) => a._d - b._d || a._i - b._i)
+                .map(t => {
+                    const inc = t.type === 'รายรับ' ? (t.amount || 0) : 0;
+                    const exp = t.type === 'รายจ่าย' ? (t.amount || 0) : 0;
+                    bal += inc - exp;
+                    return { ...t, inc, exp, bal };
+                });
+        };
+
         const SHEET_API_URL = "https://script.google.com/macros/s/AKfycbztVk2WQOCnl-80_XDUt0ubcPBjuFW8VXSortl3hb1zJGQbgPzuSlBkkAkryiGggJI/exec";
 
         // ==========================================
@@ -133,7 +152,7 @@
         // ==========================================
 
         // --- 3.1 แดชบอร์ด (Dashboard) ---
-        const DashboardTab = ({ inventory, pawns, repairs, sales }) => {
+        const DashboardTab = ({ inventory, pawns, repairs, sales, transactions }) => {
             const currentMonth = new Date().getMonth();
             const currentYear = new Date().getFullYear();
 
@@ -148,6 +167,21 @@
                 })
                 .reduce((sum, sale) => sum + sale.total, 0);
             
+            // สรุปจากสมุดบัญชี (เดือนปัจจุบัน + วันนี้)
+            const ledger = buildLedger(transactions);
+            const monthRows = ledger.filter(r => r._d.getMonth() === currentMonth && r._d.getFullYear() === currentYear);
+            const mIncome = monthRows.reduce((s, r) => s + r.inc, 0);
+            const mExpense = monthRows.reduce((s, r) => s + r.exp, 0);
+            const todayIncome = ledger.filter(r => dayKey(r._d) === dayKey(new Date())).reduce((s, r) => s + r.inc, 0);
+            const ledgerBalance = ledger.length ? ledger[ledger.length - 1].bal : 0;
+            const bookCards = [
+                { label: 'วันนี้ขายได้', val: todayIncome, color: 'text-green-600', bg: 'bg-green-50' },
+                { label: 'ขายได้/รายรับเดือนนี้', val: mIncome, color: 'text-green-600', bg: 'bg-green-50' },
+                { label: 'รายจ่ายเดือนนี้', val: mExpense, color: 'text-red-600', bg: 'bg-red-50' },
+                { label: 'กำไรสุทธิเดือนนี้', val: mIncome - mExpense, color: 'text-blue-600', bg: 'bg-blue-50' },
+                { label: 'ยอดคงเหลือสะสม', val: ledgerBalance, color: 'text-indigo-600', bg: 'bg-indigo-50' },
+            ];
+
             const pendingPawns = pawns.filter(p => ['อยู่ในระหว่างจำนำ', 'อยู่ในระหว่างหลุดจำนำ'].includes(p.status)).length;
             const pendingRepairs = repairs.filter(r => r.status !== 'ซ่อมเสร็จสิ้น').length;
 
@@ -166,6 +200,21 @@
                         </div>
                         <div className="w-14 h-14 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-sm">
                             <i className="fas fa-coins text-3xl"></i>
+                        </div>
+                    </div>
+
+                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="font-bold text-gray-800"><i className="fas fa-book text-blue-600 mr-2"></i>สรุปจากสมุดบัญชี เดือน{TH_MONTHS[currentMonth]} {currentYear}</h3>
+                            <span className="text-xs text-gray-400">{monthRows.length} รายการ</span>
+                        </div>
+                        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+                            {bookCards.map(c => (
+                                <div key={c.label} className={`${c.bg} rounded-xl p-4`}>
+                                    <p className="text-xs text-gray-500 font-medium mb-1">{c.label}</p>
+                                    <h4 className={`text-xl font-bold ${c.color}`}>฿{c.val.toLocaleString()}</h4>
+                                </div>
+                            ))}
                         </div>
                     </div>
 
@@ -262,7 +311,7 @@
                     imageUrl: isPhoneCategory ? formData.imageUrl : ''
                 };
                 setInventory([...inventory, newItem]);
-                addTransaction('รายจ่าย', `ซื้อสินค้าเข้าสต็อก: ${newItem.name}`, cost * qty, qty);
+                addTransaction('รายจ่าย', `ซื้อสินค้าเข้าสต็อก: ${newItem.name}`, cost * qty, qty, newItem.id);
                 setFormData({ 
                     sku: '', name: '', category: 'อะไหล่', cost: '', price: '', qty: '', 
                     battery: '', capacity: '', color: '', imageUrl: '' 
@@ -434,7 +483,7 @@
                         setInventory(inventory.map(i => i.id === partId ? { ...i, qty: i.qty - 1 } : i));
                     }
                     setRepairs(repairs.map(r => r.id === id ? { ...r, status: 'ซ่อมเสร็จสิ้น' } : r));
-                    addTransaction('รายรับ', `งานซ่อมบิล ${id} (${repair.model})`, repair.price, 1);
+                    addTransaction('รายรับ', `งานซ่อมบิล ${id} (${repair.model})`, repair.price, 1, id);
                     showToast(`อัปเดตสถานะและตัดสต็อกอะไหล่เรียบร้อย`);
                 }
             };
@@ -499,6 +548,28 @@
         const PawnTab = ({ pawns, setPawns, showToast, addTransaction }) => {
             const [formData, setFormData] = useState({ name: '', phone: '', idCard: '', model: '', imei: '', principal: '', startDate: '', dueDate: '' });
 
+            // ฟังก์ชันใหม่: ส่งข้อมูลไปสร้าง/อัปเดตใน Google Calendar
+            const syncToCalendar = async (pawnData) => {
+                showToast("กำลังซิงค์กับปฏิทิน...");
+                try {
+                    const response = await fetch(SHEET_API_URL, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                        body: JSON.stringify({ action: 'syncCalendar', pawn: pawnData })
+                    });
+                    const result = await response.json();
+                    if (!result.success) { showToast(result.message || 'ซิงค์ปฏิทินไม่สำเร็จ'); return; }
+                    {
+                        // อัปเดต eventId กลับไปที่ state pawns
+                        setPawns(prev => prev.map(p => p.id === pawnData.id ? { ...p, eventId: result.eventId } : p));
+                        showToast(result.message || "ซิงค์ปฏิทินสำเร็จ");
+                    }
+                } catch (error) {
+                    console.error("Calendar Sync Error:", error);
+                    showToast("ไม่สามารถซิงค์ปฏิทินได้");
+                }
+            };
+
             const handleSubmit = (e) => {
                 e.preventDefault();
                 const principal = parseFloat(formData.principal);
@@ -507,28 +578,60 @@
                     ...formData,
                     principal,
                     interest: principal * 0.10,
-                    status: 'อยู่ในระหว่างจำนำ'
+                    status: 'อยู่ในระหว่างจำนำ',
+                    eventId: null // เพิ่ม field สำหรับเก็บ ID ของ Calendar
                 };
+                
+                // 1. บันทึกลง State ของแอป
                 setPawns([...pawns, newPawn]);
-                addTransaction('รายจ่าย', `ปล่อยเงินรับจำนำ: ${newPawn.model}`, principal, 1);
+                addTransaction('รายจ่าย', `ปล่อยเงินรับจำนำ: ${newPawn.model}`, principal, 1, newPawn.id);
+                
+                // 2. เรียกฟังก์ชันซิงค์ปฏิทิน
+                syncToCalendar(newPawn);
+
                 setFormData({ name: '', phone: '', idCard: '', model: '', imei: '', principal: '', startDate: '', dueDate: '' });
                 showToast(`รับจำนำสำเร็จ (ดอกเบี้ย 10%)`);
+            };
+
+            // เพิ่มฟังก์ชันเปลี่ยนวันครบกำหนด (เลื่อนจำนำ)
+            const handleExtendDueDate = (pawnId, newDueDate) => {
+                const pawn = pawns.find(p => p.id === pawnId);
+                const updatedPawn = { ...pawn, dueDate: newDueDate };
+                
+                // อัปเดต State
+                setPawns(pawns.map(p => p.id === pawnId ? updatedPawn : p));
+                
+                // ซิงค์ปฏิทินใหม่ (GAS จะอัปเดตอันเดิมเพราะมี eventId)
+                syncToCalendar(updatedPawn);
+            };
+
+            // ส่งนัดของรายการเก่าที่ยังไม่มีในปฏิทินทั้งหมด
+            const ACTIVE_STATUS = ['อยู่ในระหว่างจำนำ', 'อยู่ในระหว่างหลุดจำนำ'];
+            const syncAllToCalendar = async () => {
+                const todo = pawns.filter(x => ACTIVE_STATUS.includes(x.status) && !x.eventId && x.dueDate);
+                if (todo.length === 0) { showToast('ไม่มีรายการที่ต้องส่งเข้าปฏิทิน'); return; }
+                for (const p of todo) { await syncToCalendar(p); }
+                showToast(`ส่งนัดเข้าปฏิทินแล้ว ${todo.length} รายการ`);
             };
 
             const handleUpdateStatus = (id, newStatus) => {
                 const p = pawns.find(x => x.id === id);
                 setPawns(pawns.map(pwn => pwn.id === id ? { ...pwn, status: newStatus } : pwn));
                 if (newStatus === 'ไถ่เครื่องออก') {
-                    addTransaction('รายรับ', `ลูกค้าไถ่เครื่องจำนำ: ${p.model}`, p.principal + p.interest, 1);
+                    addTransaction('รายรับ', `ลูกค้าไถ่เครื่องจำนำ: ${p.model}`, p.principal + p.interest, 1, p.id);
                 } else if (newStatus === 'ออกก่อนกำหนด') {
-                    addTransaction('รายรับ', `ออกก่อนกำหนด: ${p.model}`, p.principal, 1);
+                    addTransaction('รายรับ', `ออกก่อนกำหนด: ${p.model}`, p.principal, 1, p.id);
                 }
                 showToast(`อัปเดตสถานะเป็น ${newStatus}`);
+                syncToCalendar({ ...p, status: newStatus });
             };
 
             return (
                 <div className="space-y-6">
-                    <h2 className="text-2xl font-bold text-gray-800">ระบบรับจำนำ</h2>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                        <h2 className="text-2xl font-bold text-gray-800">ระบบรับจำนำ</h2>
+                        <button onClick={syncAllToCalendar} className="bg-white border border-blue-200 text-blue-600 px-4 py-2 rounded-lg text-sm font-bold hover:bg-blue-50"><i className="fas fa-calendar-plus mr-2"></i>ส่งนัดครบกำหนดทั้งหมดเข้าปฏิทิน</button>
+                    </div>
                     <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
                         <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-4 gap-4">
                             <div><label className="text-xs text-gray-500">ชื่อลูกค้า</label><input required value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="w-full border p-2 rounded text-sm" /></div>
@@ -565,7 +668,11 @@
                                         <td className="p-4 font-mono font-bold text-purple-600">{p.id}</td>
                                         <td className="p-4"><div className="font-medium">{p.name}</div><div className="text-xs text-gray-500">{p.phone}</div></td>
                                         <td className="p-4 text-right font-bold text-gray-700">฿{p.principal.toLocaleString()}</td>
-                                        <td className="p-4 text-center text-red-500">{p.dueDate}</td>
+                                        <td className="p-4 text-center text-red-500">
+                                                {ACTIVE_STATUS.includes(p.status)
+                                                    ? <input key={p.id + p.dueDate} type="date" defaultValue={p.dueDate} title="เปลี่ยนวันครบกำหนด (ปฏิทินจะอัปเดตตาม)" onBlur={e => { if (e.target.value && e.target.value !== p.dueDate) handleExtendDueDate(p.id, e.target.value); }} className="border rounded p-1 text-xs text-red-500 bg-white" />
+                                                    : p.dueDate}
+                                            </td>
                                         <td className="p-4 text-center">
                                             <span className={`px-2 py-1 rounded-md text-xs font-bold ${displayStatus.includes('หลุด') ? 'bg-red-100 text-red-700' : displayStatus === 'อยู่ในระหว่างจำนำ' ? 'bg-yellow-100 text-yellow-700' : 'bg-gray-100 text-gray-700'}`}>
                                                 {displayStatus}
@@ -649,82 +756,176 @@
             );
         };
 
-        // --- 3.6 บัญชีรายรับ-รายจ่าย (Transactions) ---
-        const TransactionTab = ({ transactions, onPrint }) => {
-            const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
-            const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+        // --- 3.6 สมุดบัญชีรายรับ-รายจ่าย (Ledger) ---
+        const TransactionTab = ({ transactions, setTransactions, onPrint, showToast }) => {
+            const now = new Date();
+            const [selectedMonth, setSelectedMonth] = useState(now.getMonth());
+            const [selectedYear, setSelectedYear] = useState(now.getFullYear());
+            const [editIdx, setEditIdx] = useState(null);
+            const [draft, setDraft] = useState({});
+            const [showAdd, setShowAdd] = useState(false);
+            const blank = () => ({ date: dayKey(new Date()), type: 'รายรับ', detail: '', ref: '', amount: '', note: '' });
+            const [nr, setNr] = useState(blank());
+            const inp = 'w-full border rounded p-1.5 text-sm';
+            const setDate = (ymd, base) => { const [y, m, d] = ymd.split('-').map(Number); const nd = new Date(base || new Date()); nd.setFullYear(y, m - 1, d); return nd; };
 
-            const months = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+            const ledger = buildLedger(transactions);
+            const rows = ledger.filter(r => r._d.getMonth() === selectedMonth && r._d.getFullYear() === selectedYear);
+            const before = ledger.filter(r => r._d < new Date(selectedYear, selectedMonth, 1));
+            const opening = before.length ? before[before.length - 1].bal : 0;
+            const totalIncome = rows.reduce((s, r) => s + r.inc, 0);
+            const totalExpense = rows.reduce((s, r) => s + r.exp, 0);
+            const netProfit = totalIncome - totalExpense;
+            const todayIncome = ledger.filter(r => dayKey(r._d) === dayKey(now)).reduce((s, r) => s + r.inc, 0);
 
-            const filteredTransactions = transactions.filter(t => {
-                if (!t.rawDate) return true;
-                const d = new Date(t.rawDate);
-                return d.getMonth() === selectedMonth && d.getFullYear() === selectedYear;
+            const days = [];
+            rows.forEach(r => {
+                const k = dayKey(r._d);
+                let g = days[days.length - 1];
+                if (!g || g.k !== k) { g = { k, d: r._d, items: [] }; days.push(g); }
+                g.items.push(r);
             });
 
-            const totalIncome = filteredTransactions.filter(t => t.type === 'รายรับ').reduce((sum, t) => sum + (t.amount || 0), 0);
-            const totalExpense = filteredTransactions.filter(t => t.type === 'รายจ่าย').reduce((sum, t) => sum + (t.amount || 0), 0);
-            const netProfit = totalIncome - totalExpense;
-
-            const handlePrintSummary = () => {
-                onPrint('transaction', {
-                    monthStr: `${months[selectedMonth]} ${selectedYear}`,
-                    totalIncome,
-                    totalExpense,
-                    netProfit,
-                    transactions: filteredTransactions
-                });
+            const startEdit = (r) => { setEditIdx(r._i); setDraft({ date: dayKey(r._d), detail: r.detail || '', ref: r.ref || '', income: r.inc || '', expense: r.exp || '', note: r.note || '' }); };
+            const saveEdit = (r) => {
+                const inc = parseFloat(draft.income) || 0, exp = parseFloat(draft.expense) || 0;
+                if ((inc > 0) === (exp > 0)) { showToast('กรอกยอดรายรับ หรือ รายจ่าย อย่างใดอย่างหนึ่งเท่านั้น'); return; }
+                const nd = setDate(draft.date, r._d);
+                setTransactions(prev => prev.map((t, i) => i === r._i ? { ...t, date: nd.toLocaleString('th-TH'), rawDate: nd.toISOString(), type: inc > 0 ? 'รายรับ' : 'รายจ่าย', amount: inc > 0 ? inc : exp, detail: draft.detail, ref: draft.ref, note: draft.note } : t));
+                setEditIdx(null);
+                showToast('บันทึกการแก้ไขแล้ว');
             };
+            const removeRow = (r) => {
+                if (!confirm(`ลบรายการ "${r.detail}" ?`)) return;
+                setTransactions(prev => prev.filter((_, i) => i !== r._i));
+                showToast('ลบรายการแล้ว');
+            };
+            const addRow = (e) => {
+                e.preventDefault();
+                const amount = parseFloat(nr.amount) || 0;
+                if (amount <= 0) { showToast('กรุณากรอกจำนวนเงิน'); return; }
+                const nd = setDate(nr.date);
+                setTransactions(prev => [{ id: Date.now(), date: nd.toLocaleString('th-TH'), rawDate: nd.toISOString(), type: nr.type, detail: nr.detail, amount, qty: '-', ref: nr.ref, note: nr.note }, ...prev]);
+                setNr(blank());
+                setShowAdd(false);
+                showToast('เพิ่มรายการเรียบร้อย');
+            };
+
+            const handlePrintSummary = () => onPrint('transaction', { monthStr: `${TH_MONTHS[selectedMonth]} ${selectedYear}`, totalIncome, totalExpense, netProfit, transactions: rows });
+
+            const cards = [
+                { label: 'วันนี้ขายได้', val: todayIncome, c: 'text-green-600', b: 'border-green-100' },
+                { label: `ขายได้/รายรับเดือน${TH_MONTHS[selectedMonth]}`, val: totalIncome, c: 'text-green-600', b: 'border-green-100' },
+                { label: 'รายจ่ายรวมเดือนนี้', val: totalExpense, c: 'text-red-600', b: 'border-red-100' },
+                { label: 'ยอดสุทธิเดือนนี้ (กำไร)', val: netProfit, c: 'text-blue-600', b: 'border-blue-100' },
+                { label: 'ยอดคงเหลือสิ้นเดือน', val: opening + netProfit, c: 'text-indigo-600', b: 'border-indigo-100' },
+            ];
 
             return (
                 <div className="space-y-6">
-                    <div className="flex justify-between items-end">
-                        <h2 className="text-2xl font-bold text-gray-800">บัญชีรายรับ-รายจ่าย (ตัดรอบเดือน)</h2>
-                        <div className="flex gap-2">
+                    <div className="flex flex-wrap justify-between items-end gap-3">
+                        <h2 className="text-2xl font-bold text-gray-800">สมุดบัญชีรายรับ-รายจ่าย</h2>
+                        <div className="flex flex-wrap gap-2">
                             <select value={selectedMonth} onChange={e => setSelectedMonth(Number(e.target.value))} className="border p-2 rounded-lg bg-white shadow-sm font-medium">
-                                {months.map((m, i) => <option key={i} value={i}>{m}</option>)}
+                                {TH_MONTHS.map((m, i) => <option key={i} value={i}>{m}</option>)}
                             </select>
                             <select value={selectedYear} onChange={e => setSelectedYear(Number(e.target.value))} className="border p-2 rounded-lg bg-white shadow-sm font-medium">
-                                {[...Array(5)].map((_, i) => {
-                                    const y = new Date().getFullYear() - i;
-                                    return <option key={y} value={y}>{y}</option>;
-                                })}
+                                {[...Array(5)].map((_, i) => { const y = now.getFullYear() - i; return <option key={y} value={y}>{y}</option>; })}
                             </select>
+                            <button onClick={() => setShowAdd(!showAdd)} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold text-sm hover:bg-blue-700"><i className="fas fa-plus mr-1"></i>เพิ่มรายการ</button>
+                            <button onClick={handlePrintSummary} className="bg-blue-100 text-blue-600 px-3 py-2 rounded-lg hover:bg-blue-200" title="พิมพ์สรุปยอด"><i className="fas fa-print"></i></button>
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        <div className="bg-white p-6 rounded-xl shadow-sm border border-green-100 flex items-center justify-between">
-                            <div><p className="text-sm text-gray-500 font-medium mb-1">รายรับรวม</p><h3 className="text-2xl font-bold text-green-600">฿{totalIncome.toLocaleString()}</h3></div>
-                        </div>
-                        <div className="bg-white p-6 rounded-xl shadow-sm border border-red-100 flex items-center justify-between">
-                            <div><p className="text-sm text-gray-500 font-medium mb-1">รายจ่ายรวม</p><h3 className="text-2xl font-bold text-red-600">฿{totalExpense.toLocaleString()}</h3></div>
-                        </div>
-                        <div className="bg-white p-6 rounded-xl shadow-sm border border-blue-100 flex items-center justify-between">
-                            <div><p className="text-sm text-gray-500 font-medium mb-1">ยอดสุทธิ (กำไร)</p><h3 className="text-2xl font-bold text-blue-600">฿{netProfit.toLocaleString()}</h3></div>
-                            <button onClick={handlePrintSummary} className="bg-blue-100 text-blue-600 p-3 rounded-xl hover:bg-blue-200 transition" title="พิมพ์สรุปยอด">
-                                <i className="fas fa-print text-2xl"></i>
-                            </button>
-                        </div>
+                    <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+                        {cards.map(c => (
+                            <div key={c.label} className={`bg-white p-4 rounded-xl shadow-sm border ${c.b}`}>
+                                <p className="text-xs text-gray-500 font-medium mb-1">{c.label}</p>
+                                <h3 className={`text-xl font-bold ${c.c}`}>฿{c.val.toLocaleString()}</h3>
+                            </div>
+                        ))}
                     </div>
+
+                    {showAdd && (
+                        <form onSubmit={addRow} className="bg-white p-4 rounded-xl border border-blue-200 grid grid-cols-2 md:grid-cols-6 gap-3 items-end">
+                            <div><label className="text-xs text-gray-500">วันที่</label><input type="date" required value={nr.date} onChange={e => setNr({ ...nr, date: e.target.value })} className={inp} /></div>
+                            <div><label className="text-xs text-gray-500">ประเภท</label><select value={nr.type} onChange={e => setNr({ ...nr, type: e.target.value })} className={inp}><option>รายรับ</option><option>รายจ่าย</option></select></div>
+                            <div className="col-span-2"><label className="text-xs text-gray-500">รายการ (คำอธิบาย)</label><input required value={nr.detail} onChange={e => setNr({ ...nr, detail: e.target.value })} className={inp} /></div>
+                            <div><label className="text-xs text-gray-500">เลขที่เอกสารอ้างอิง</label><input value={nr.ref} onChange={e => setNr({ ...nr, ref: e.target.value })} className={inp} /></div>
+                            <div><label className="text-xs text-gray-500">จำนวนเงิน (บาท)</label><input type="number" required min="0" step="any" value={nr.amount} onChange={e => setNr({ ...nr, amount: e.target.value })} className={inp} /></div>
+                            <div className="col-span-2 md:col-span-5"><label className="text-xs text-gray-500">หมายเหตุ</label><input value={nr.note} onChange={e => setNr({ ...nr, note: e.target.value })} className={inp} /></div>
+                            <button type="submit" className="bg-green-600 text-white py-2 rounded-lg font-bold text-sm hover:bg-green-700">บันทึก</button>
+                        </form>
+                    )}
 
                     <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
                         <div className="overflow-x-auto">
-                        <table className="w-full text-left">
-                            <thead className="bg-slate-50 text-slate-600 text-sm">
-                                <tr><th className="p-4 border-b">วันที่/เวลา</th><th className="p-4 border-b">ประเภท</th><th className="p-4 border-b">รายละเอียด</th><th className="p-4 border-b text-center">จำนวน</th><th className="p-4 border-b text-right">ยอดเงิน (฿)</th></tr>
-                            </thead>
-                            <tbody>
-                                {filteredTransactions.length === 0 ? <tr><td colSpan={5} className="p-8 text-center text-gray-400">ไม่มีรายการในรอบเดือนนี้</td></tr> : filteredTransactions.map(t => (
-                                    <tr key={t.id} className="border-b hover:bg-gray-50 text-sm">
-                                        <td className="p-4 text-gray-500">{t.date}</td>
-                                        <td className="p-4"><span className={`px-2 py-1 rounded text-xs font-bold ${t.type === 'รายรับ' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{t.type}</span></td>
-                                        <td className="p-4 font-medium">{t.detail}</td><td className="p-4 text-center">{t.qty}</td>
-                                        <td className={`p-4 text-right font-bold ${t.type === 'รายรับ' ? 'text-green-600' : 'text-red-600'}`}>฿{(t.amount || 0).toLocaleString()}</td>
+                            <table className="w-full text-left min-w-[960px]">
+                                <thead className="bg-slate-50 text-slate-600 text-sm">
+                                    <tr>
+                                        <th className="p-3 border-b">วันที่</th><th className="p-3 border-b">รายการ (คำอธิบาย)</th><th className="p-3 border-b">เลขที่เอกสารอ้างอิง</th>
+                                        <th className="p-3 border-b text-right">รายรับ (บาท)</th><th className="p-3 border-b text-right">รายจ่าย (บาท)</th><th className="p-3 border-b text-right">ยอดคงเหลือ (บาท)</th>
+                                        <th className="p-3 border-b">หมายเหตุ</th><th className="p-3 border-b text-center">จัดการ</th>
                                     </tr>
-                                ))}
-                            </tbody>
-                        </table>
+                                </thead>
+                                <tbody>
+                                    <tr className="bg-slate-100 text-sm font-bold text-slate-600">
+                                        <td className="p-3" colSpan={5}>ยอดยกมา (ต้นเดือน{TH_MONTHS[selectedMonth]})</td>
+                                        <td className="p-3 text-right">{opening.toLocaleString()}</td><td colSpan={2}></td>
+                                    </tr>
+                                    {days.length === 0 && <tr><td colSpan={8} className="p-8 text-center text-gray-400">ไม่มีรายการในเดือนนี้</td></tr>}
+                                    {days.map(g => {
+                                        const dInc = g.items.reduce((s, r) => s + r.inc, 0), dExp = g.items.reduce((s, r) => s + r.exp, 0);
+                                        return (
+                                            <React.Fragment key={g.k}>
+                                                {g.items.map(r => editIdx === r._i ? (
+                                                    <tr key={r._i} className="bg-yellow-50 border-b text-sm">
+                                                        <td className="p-2"><input type="date" value={draft.date} onChange={e => setDraft({ ...draft, date: e.target.value })} className={inp} /></td>
+                                                        <td className="p-2"><input value={draft.detail} onChange={e => setDraft({ ...draft, detail: e.target.value })} className={inp} /></td>
+                                                        <td className="p-2"><input value={draft.ref} onChange={e => setDraft({ ...draft, ref: e.target.value })} className={inp} /></td>
+                                                        <td className="p-2"><input type="number" min="0" step="any" value={draft.income} onChange={e => setDraft({ ...draft, income: e.target.value })} className={inp + ' text-right'} /></td>
+                                                        <td className="p-2"><input type="number" min="0" step="any" value={draft.expense} onChange={e => setDraft({ ...draft, expense: e.target.value })} className={inp + ' text-right'} /></td>
+                                                        <td className="p-2 text-right text-xs text-gray-400">คำนวณอัตโนมัติ</td>
+                                                        <td className="p-2"><input value={draft.note} onChange={e => setDraft({ ...draft, note: e.target.value })} className={inp} /></td>
+                                                        <td className="p-2 text-center whitespace-nowrap">
+                                                            <button onClick={() => saveEdit(r)} className="text-green-600 hover:bg-green-100 p-2 rounded" title="บันทึก"><i className="fas fa-check"></i></button>
+                                                            <button onClick={() => setEditIdx(null)} className="text-gray-500 hover:bg-gray-200 p-2 rounded" title="ยกเลิก"><i className="fas fa-times"></i></button>
+                                                        </td>
+                                                    </tr>
+                                                ) : (
+                                                    <tr key={r._i} className="border-b hover:bg-gray-50 text-sm">
+                                                        <td className="p-3 text-gray-500 whitespace-nowrap">{r._d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' })} <span className="text-xs text-gray-400">{r._d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}</span></td>
+                                                        <td className="p-3 font-medium">{r.detail}{r.qty && r.qty !== '-' ? <span className="text-xs text-gray-400"> (x{r.qty})</span> : null}</td>
+                                                        <td className="p-3 text-gray-500 whitespace-nowrap">{r.ref || '-'}</td>
+                                                        <td className="p-3 text-right font-bold text-green-600">{r.inc ? r.inc.toLocaleString() : ''}</td>
+                                                        <td className="p-3 text-right font-bold text-red-600">{r.exp ? r.exp.toLocaleString() : ''}</td>
+                                                        <td className="p-3 text-right font-bold text-gray-800">{r.bal.toLocaleString()}</td>
+                                                        <td className="p-3 text-gray-500">{r.note}</td>
+                                                        <td className="p-3 text-center whitespace-nowrap">
+                                                            <button onClick={() => startEdit(r)} className="text-blue-600 hover:bg-blue-100 p-2 rounded" title="แก้ไข"><i className="fas fa-edit"></i></button>
+                                                            <button onClick={() => removeRow(r)} className="text-red-500 hover:bg-red-100 p-2 rounded" title="ลบ"><i className="fas fa-trash"></i></button>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                                <tr className="bg-amber-50 border-b text-sm font-bold">
+                                                    <td className="p-3 text-amber-800" colSpan={3}>สรุปวันที่ {g.d.toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' })} — ขายได้วันนี้ ฿{dInc.toLocaleString()}</td>
+                                                    <td className="p-3 text-right text-green-700">{dInc.toLocaleString()}</td>
+                                                    <td className="p-3 text-right text-red-700">{dExp.toLocaleString()}</td>
+                                                    <td className="p-3 text-right">{g.items[g.items.length - 1].bal.toLocaleString()}</td>
+                                                    <td className="p-3 text-amber-800" colSpan={2}>สุทธิ ฿{(dInc - dExp).toLocaleString()}</td>
+                                                </tr>
+                                            </React.Fragment>
+                                        );
+                                    })}
+                                    <tr className="bg-blue-50 text-sm font-extrabold">
+                                        <td className="p-3 text-blue-800" colSpan={3}>รวมทั้งเดือน {TH_MONTHS[selectedMonth]} {selectedYear} — ขายได้ ฿{totalIncome.toLocaleString()}</td>
+                                        <td className="p-3 text-right text-green-700">{totalIncome.toLocaleString()}</td>
+                                        <td className="p-3 text-right text-red-700">{totalExpense.toLocaleString()}</td>
+                                        <td className="p-3 text-right text-blue-800">{(opening + netProfit).toLocaleString()}</td>
+                                        <td colSpan={2}></td>
+                                    </tr>
+                                </tbody>
+                            </table>
                         </div>
                     </div>
                 </div>
@@ -755,11 +956,12 @@
             const checkout = () => {
                 if (cart.length === 0) return;
                 const total = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
+                const saleId = `INV-${Date.now()}`;
                 cart.forEach(cartItem => {
                     setInventory(prev => prev.map(i => i.id === cartItem.id ? { ...i, qty: i.qty - cartItem.qty } : i));
-                    addTransaction('รายรับ', `ขายสินค้า (POS): ${cartItem.name}`, cartItem.price * cartItem.qty, cartItem.qty);
+                    addTransaction('รายรับ', `ขายสินค้า (POS): ${cartItem.name}`, cartItem.price * cartItem.qty, cartItem.qty, saleId);
                 });
-                const sale = { id: `INV-${Date.now()}`, date: new Date().toISOString(), total, items: cart };
+                const sale = { id: saleId, date: new Date().toISOString(), total, items: cart };
                 addSale(sale);
                 onPrint('sale', sale);
                 setCart([]);
@@ -894,7 +1096,7 @@
             const showToast = (msg) => setToastMessage(msg);
             
             // ระบบบันทึกรายรับ-รายจ่ายกลาง
-            const addTransaction = (type, detail, amount = 0, qty = '-') => {
+            const addTransaction = (type, detail, amount = 0, qty = '-', ref = '', note = '') => {
                 setTransactions(prev => [{ 
                     id: Date.now(), 
                     date: new Date().toLocaleString('th-TH'), 
@@ -902,7 +1104,9 @@
                     type, 
                     detail, 
                     amount,
-                    qty 
+                    qty,
+                    ref,
+                    note
                 }, ...prev]);
             };
 
@@ -920,7 +1124,7 @@
                 { id: 'repair', label: 'ระบบงานซ่อม', icon: 'fas fa-wrench', role: 'all' },
                 { id: 'pawn', label: 'ระบบรับจำนำ', icon: 'fas fa-exclamation-circle', role: 'all' },
                 { id: 'crm', label: 'ประวัติลูกค้า', icon: 'fas fa-users', role: 'all' },
-                { id: 'transactions', label: 'บัญชีรายรับ-รายจ่าย', icon: 'fas fa-history', role: 'admin' },
+                { id: 'transactions', label: 'สมุดบัญชี รายรับ-รายจ่าย', icon: 'fas fa-book', role: 'admin' },
             ];
             const visibleMenus = menuItems.filter(m => m.role === 'all' || m.role === userRole);
 
@@ -1088,12 +1292,12 @@
                             </div>
                             <div className="flex-1 overflow-auto p-4 sm:p-6 lg:p-8">
                                 <div className="max-w-7xl mx-auto h-full pb-20">
-                                    {activeTab === 'dashboard' && <DashboardTab inventory={inventory} pawns={pawns} repairs={repairs} sales={sales} />}
+                                    {activeTab === 'dashboard' && <DashboardTab inventory={inventory} pawns={pawns} repairs={repairs} sales={sales} transactions={transactions} />}
                                     {activeTab === 'inventory' && <InventoryTab inventory={inventory} setInventory={setInventory} userRole={userRole} addTransaction={addTransaction} showToast={showToast} />}
                                     {activeTab === 'repair' && <RepairTab repairs={repairs} setRepairs={setRepairs} inventory={inventory} setInventory={setInventory} addTransaction={addTransaction} showToast={showToast} onPrint={handlePrint} />}
                                     {activeTab === 'pawn' && <PawnTab pawns={pawns} setPawns={setPawns} showToast={showToast} addTransaction={addTransaction} />}
                                     {activeTab === 'crm' && <CRMTab repairs={repairs} pawns={pawns} onPrintRepair={handlePrint} />}
-                                    {activeTab === 'transactions' && <TransactionTab transactions={transactions} onPrint={handlePrint} />}
+                                    {activeTab === 'transactions' && <TransactionTab transactions={transactions} setTransactions={setTransactions} showToast={showToast} onPrint={handlePrint} />}
                                     {activeTab === 'pos' && <POSTab inventory={inventory} setInventory={setInventory} addTransaction={addTransaction} addSale={s => setSales([...sales, s])} showToast={showToast} onPrint={handlePrint} />}
                                 </div>
                             </div>
