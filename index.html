@@ -1034,6 +1034,7 @@
 
             // ฟังก์ชันส่งข้อมูลขึ้น Google Sheets
             const handleSyncToSheet = async () => {
+                if (!dataLoaded) { showToast('ยังไม่ได้โหลดข้อมูลจากชีต จึงไม่บันทึกทับ'); return; }
                 setIsSyncing(true);
                 try {
                     const dbData = { inventory, transactions, repairs, pawns, sales };
@@ -1063,15 +1064,19 @@
                         setPawns(data.pawns || []);
                         setSales(data.sales || []);
                         showToast('ดึงข้อมูลจาก Google Sheets สำเร็จ!');
+                        setDataLoaded(true);
+                    } else if (data && Object.keys(data).length === 0) {
+                        showToast('ชีตยังว่างเปล่า เริ่มต้นใช้งานระบบใหม่');
+                        setDataLoaded(true); // ใช้งานครั้งแรก อนุญาตให้บันทึกได้
                     } else {
-                        showToast('ไม่พบข้อมูล หรือข้อมูลว่างเปล่า');
+                        // ข้อมูลในชีตผิดรูปแบบ: ห้ามบันทึกทับเด็ดขาด
+                        alert('⚠️ ข้อมูลในชีตผิดรูปแบบ ระบบจึงหยุดบันทึกอัตโนมัติเพื่อป้องกันข้อมูลเสียหาย\nโปรดแจ้งผู้ดูแลระบบก่อนใช้งานต่อ');
                     }
                 } catch (error) {
                     console.error(error);
-                    showToast('เกิดข้อผิดพลาดในการดึงข้อมูล');
+                    alert('⚠️ ดึงข้อมูลจาก Google Sheets ไม่สำเร็จ ระบบจึงหยุดบันทึกอัตโนมัติเพื่อป้องกันข้อมูลถูกเขียนทับ\nลองรีเฟรชหน้านี้อีกครั้ง');
                 }
                 setIsSyncing(false);
-                setDataLoaded(true);
             };
 
             // ดึงข้อมูลจาก Google Sheets อัตโนมัติทันทีที่เปิดแอป (ครั้งเดียวตอนโหลด)
