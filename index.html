@@ -19,6 +19,9 @@
     <!-- Babel for in-browser JSX compilation -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
+    <!-- Face recognition (สแกนใบหน้าเข้าสู่ระบบ) -->
+    <script src="https://cdn.jsdelivr.net/gh/vladmandic/face-api@1.7.12/dist/face-api.js"></script>
+
     <style>
         /* สไตล์สำหรับการพิมพ์ (A4 Print) */
         @media print {
@@ -71,7 +74,7 @@
 
     <!-- React Application Code -->
     <script type="text/babel">
-        const { useState, useEffect, useMemo } = React;
+        const { useState, useEffect, useMemo, useRef} = React;
 
         // URL ของ Google Apps Script (Web App) สำหรับบันทึก/ดึงข้อมูลอัตโนมัติ
         const SHEET_API_URL = "https://script.google.com/macros/s/AKfycbyH5b7ekdRfJK97w02F946oLfhk-6kJTY1tYo3v36ePE4TCR4uj447EB-zx46CmvjlioQ/exec";
@@ -122,39 +125,220 @@
         };
 
         // ==========================================
-        // 2. หน้าต่างเข้าสู่ระบบ (LoginView)
+        // 2. สแกนใบหน้าเข้าสู่ระบบ (Face Login) - เจ้าของ + ผู้จัดการ 1 คน
         // ==========================================
-        const LoginView = ({ onLogin }) => {
-            const [username, setUsername] = useState('Navapich');
+        const FACE_KEY = 'gp_face_auth';
+        const FACE_MODEL_URL = 'https://cdn.jsdelivr.net/gh/vladmandic/face-api@1.7.12/model/';
+        const FACE_USERS = [
+            { id: 'owner', name: 'เจ้าของ', role: 'admin' },
+            { id: 'manager', name: 'ผู้จัดการ', role: 'manager' }
+        ];
+        const FACE_MATCH_DIST = 0.5; // ยิ่งน้อยยิ่งเข้มงวด
 
-            const handleLoginSubmit = (e) => {
+        const loadFaces = () => { try { return JSON.parse(localStorage.getItem(FACE_KEY)) || {}; } catch (e) { return {}; } };
+        const saveFaces = (d) => { try { localStorage.setItem(FACE_KEY, JSON.stringify(d)); } catch (e) {} };
+        const hashPin = async (pin) => {
+            try {
+                const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('gp:' + pin));
+                return Array.from(new Uint8Array(b)).map(x => x.toString(16).padStart(2, '0')).join('');
+            } catch (e) { return 'p:' + btoa(pin); }
+        };
+
+        let faceModelsPromise = null;
+        const loadFaceModels = () => faceModelsPromise || (faceModelsPromise = (async () => {
+            await Promise.all([
+                faceapi.nets.tinyFaceDetector.loadFromUri(FACE_MODEL_URL),
+                faceapi.nets.faceLandmark68Net.loadFromUri(FACE_MODEL_URL),
+                faceapi.nets.faceRecognitionNet.loadFromUri(FACE_MODEL_URL)
+            ]);
+        })().catch(e => { faceModelsPromise = null; throw e; }));
+
+        const getDescriptor = async (video) => {
+            const r = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 })).withFaceLandmarks().withFaceDescriptor();
+            return r ? r.descriptor : null;
+        };
+        const faceDist = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) { const d = a[i] - b[i]; s += d * d; } return Math.sqrt(s); };
+        const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+        const useCamera = (videoRef, active) => {
+            const [camError, setCamError] = useState('');
+            useEffect(() => {
+                if (!active) return;
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { setCamError('เบราว์เซอร์นี้ไม่รองรับการเปิดกล้อง'); return; }
+                let stream = null, cancelled = false;
+                navigator.mediaDevices.getUserMedia({ video: { width: 480, height: 360, facingMode: 'user' } })
+                    .then(s => {
+                        if (cancelled) { s.getTracks().forEach(t => t.stop()); return; }
+                        stream = s; videoRef.current.srcObject = s; videoRef.current.play();
+                    })
+                    .catch(() => setCamError('เปิดกล้องไม่ได้ กรุณากดอนุญาตการใช้กล้อง หรือใช้ PIN สำรอง'));
+                return () => { cancelled = true; if (stream) stream.getTracks().forEach(t => t.stop()); };
+            }, [active]);
+            return camError;
+        };
+
+        // ลงทะเบียนใบหน้า + ตั้ง PIN สำรอง
+        const FaceEnroll = ({ user, onSaved, onCancel }) => {
+            const videoRef = useRef(null);
+            const [ready, setReady] = useState(false);
+            const [busy, setBusy] = useState(false);
+            const [pin, setPin] = useState('');
+            const [msg, setMsg] = useState('กำลังโหลดระบบสแกนใบหน้า (ต้องต่ออินเทอร์เน็ต)...');
+            const camError = useCamera(videoRef, true);
+            useEffect(() => {
+                let alive = true;
+                loadFaceModels().then(() => { if (alive) { setReady(true); setMsg('มองตรงที่กล้อง ตั้ง PIN แล้วกดบันทึกใบหน้า'); } })
+                    .catch(() => { if (alive) setMsg('โหลดระบบสแกนไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วเปิดหน้านี้ใหม่'); });
+                return () => { alive = false; };
+            }, []);
+            const capture = async () => {
+                if (!/^\d{4,6}$/.test(pin)) { setMsg('กรุณาตั้ง PIN สำรองเป็นตัวเลข 4-6 หลัก'); return; }
+                setBusy(true);
+                const samples = [];
+                for (let i = 0; i < 3; i++) {
+                    setMsg(`กำลังบันทึกใบหน้า ${i + 1}/3 ... ขยับหน้าเล็กน้อย`);
+                    let d = null;
+                    for (let t = 0; t < 8 && !d; t++) { d = await getDescriptor(videoRef.current); if (!d) await sleep(300); }
+                    if (!d) { setMsg('ไม่พบใบหน้า กรุณามองกล้องให้ชัดแล้วลองใหม่'); setBusy(false); return; }
+                    samples.push(Array.from(d).map(x => +x.toFixed(4)));
+                    await sleep(500);
+                }
+                onSaved({ samples, pinHash: await hashPin(pin) });
+            };
+            return (
+                <div className="space-y-3">
+                    <video ref={videoRef} muted playsInline className="w-full rounded-xl bg-black aspect-[4/3] object-cover" style={{ transform: 'scaleX(-1)' }} />
+                    {camError && <p className="text-sm text-red-500 text-center">{camError}</p>}
+                    <p className="text-sm text-center text-gray-600">{msg}</p>
+                    <div>
+                        <label className="block text-xs font-semibold text-gray-600 mb-1">ตั้ง PIN สำรอง 4-6 หลัก ({user.name})</label>
+                        <input type="password" inputMode="numeric" maxLength={6} value={pin} onChange={e => setPin(e.target.value.replace(/\D/g, ''))} className="w-full p-3 border rounded-xl text-sm tracking-widest" />
+                    </div>
+                    <p className="text-[11px] text-gray-400">ระบบเก็บเฉพาะข้อมูลตัวเลขลักษณะใบหน้าไว้ในเครื่องนี้ ไม่เก็บรูปภาพ และควรได้รับความยินยอมจากผู้ลงทะเบียน</p>
+                    <div className="flex gap-3">
+                        {onCancel && <button onClick={onCancel} className="flex-1 border border-gray-300 text-gray-600 font-bold py-3 rounded-xl hover:bg-gray-50">ยกเลิก</button>}
+                        <button disabled={!ready || busy} onClick={capture} className="flex-1 bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700 disabled:opacity-50"><i className="fas fa-camera mr-2"></i>บันทึกใบหน้า</button>
+                    </div>
+                </div>
+            );
+        };
+
+        // หน้าต่างจัดการใบหน้า (เฉพาะเจ้าของ): ลงทะเบียน/ถ่ายใหม่/ลบ ผู้จัดการ
+        const FaceManager = ({ onClose }) => {
+            const [faces, setFaces] = useState(loadFaces());
+            const [enrolling, setEnrolling] = useState(null);
+            const update = (next) => { saveFaces(next); setFaces(next); };
+            return (
+                <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+                        {enrolling ? (
+                            <>
+                                <h3 className="text-lg font-bold text-gray-800">ลงทะเบียนใบหน้า: {enrolling.name}</h3>
+                                <FaceEnroll user={enrolling} onCancel={() => setEnrolling(null)} onSaved={(rec) => { update({ ...faces, [enrolling.id]: rec }); setEnrolling(null); }} />
+                            </>
+                        ) : (
+                            <>
+                                <h3 className="text-lg font-bold text-gray-800"><i className="fas fa-user-shield text-blue-600 mr-2"></i>จัดการใบหน้า / PIN</h3>
+                                {FACE_USERS.map(u => (
+                                    <div key={u.id} className="flex items-center justify-between border rounded-xl p-3">
+                                        <div>
+                                            <p className="font-bold text-gray-800">{u.name}</p>
+                                            <p className={`text-xs ${faces[u.id] ? 'text-green-600' : 'text-gray-400'}`}>{faces[u.id] ? 'ลงทะเบียนแล้ว' : 'ยังไม่ได้ลงทะเบียน'}</p>
+                                        </div>
+                                        <div className="flex gap-2">
+                                            <button onClick={() => setEnrolling(u)} className="px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg text-sm font-bold hover:bg-blue-100">{faces[u.id] ? 'ถ่ายใหม่ / เปลี่ยน PIN' : 'ลงทะเบียน'}</button>
+                                            {u.id !== 'owner' && faces[u.id] && <button onClick={() => { const { [u.id]: _removed, ...rest } = faces; update(rest); }} className="px-3 py-1.5 bg-red-50 text-red-500 rounded-lg text-sm font-bold hover:bg-red-100">ลบ</button>}
+                                        </div>
+                                    </div>
+                                ))}
+                                <button onClick={onClose} className="w-full border border-gray-300 text-gray-600 font-bold py-2.5 rounded-xl hover:bg-gray-50">ปิด</button>
+                            </>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        const LoginView = ({ onLogin }) => {
+            const [faces] = useState(loadFaces());
+            const [mode, setMode] = useState(faces.owner ? 'scan' : 'setup');
+            const [msg, setMsg] = useState('กำลังโหลดระบบสแกนใบหน้า...');
+            const [pinUser, setPinUser] = useState('owner');
+            const [pin, setPin] = useState('');
+            const videoRef = useRef(null);
+            const camError = useCamera(videoRef, mode === 'scan');
+
+            useEffect(() => {
+                if (mode !== 'scan') return;
+                let stop = false, streak = 0, last = '';
+                (async () => {
+                    try { await loadFaceModels(); } catch (e) { setMsg('โหลดระบบสแกนไม่ได้ กรุณาใช้ PIN สำรอง'); return; }
+                    setMsg('มองตรงที่กล้องเพื่อเข้าสู่ระบบ');
+                    while (!stop) {
+                        const v = videoRef.current;
+                        if (v && v.readyState >= 2) {
+                            const d = await getDescriptor(v);
+                            let best = null;
+                            if (d) for (const u of FACE_USERS) {
+                                const rec = faces[u.id];
+                                if (!rec) continue;
+                                const dist = Math.min(...rec.samples.map(sm => faceDist(d, sm)));
+                                if (dist < FACE_MATCH_DIST && (!best || dist < best.dist)) best = { u, dist };
+                            }
+                            if (best && best.u.id === last) streak++; else { streak = best ? 1 : 0; last = best ? best.u.id : ''; }
+                            if (streak >= 3 && !stop) { stop = true; onLogin(best.u.role, best.u.name); return; }
+                            setMsg(!d ? 'ไม่พบใบหน้า กรุณามองกล้อง' : best ? `กำลังยืนยันตัวตน...` : 'ไม่รู้จักใบหน้านี้');
+                        }
+                        await sleep(400);
+                    }
+                })();
+                return () => { stop = true; };
+            }, [mode]);
+
+            const submitPin = async (e) => {
                 e.preventDefault();
-                onLogin('admin');
+                const u = FACE_USERS.find(x => x.id === pinUser);
+                const rec = faces[pinUser];
+                if (rec && rec.pinHash === await hashPin(pin)) onLogin(u.role, u.name);
+                else { setMsg('PIN ไม่ถูกต้อง'); setPin(''); }
             };
 
             return (
                 <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
                     <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 border border-gray-100 modal-enter">
-                        <div className="text-center mb-8">
+                        <div className="text-center mb-6">
                             <img src={LOGO_SRC} alt="GP Mobile shop" className="w-16 h-16 rounded-2xl mx-auto mb-4 shadow-md" />
                             <h1 className="text-2xl font-bold text-gray-800">เข้าสู่ระบบ GP Mobile shop</h1>
                         </div>
-                        
-                        <form onSubmit={handleLoginSubmit} className="space-y-4">
-                            <div>
-                                <label className="block text-xs font-semibold text-gray-600 mb-1">Username (ชื่อผู้ใช้งาน)</label>
-                                <input 
-                                    type="text" 
-                                    value={username} 
-                                    onChange={(e) => setUsername(e.target.value)} 
-                                    placeholder="กรอก Username" 
-                                    className="w-full p-3 border rounded-xl text-sm focus:outline-blue-500" 
-                                />
+
+                        {mode === 'setup' && (
+                            <div className="space-y-3">
+                                <p className="text-sm text-gray-600 text-center">ตั้งค่าครั้งแรก: ลงทะเบียนใบหน้า<b>เจ้าของ</b><br/>(ผู้จัดการลงทะเบียนได้ภายหลัง จากเมนู "จัดการใบหน้า / PIN")</p>
+                                <FaceEnroll user={FACE_USERS[0]} onSaved={(rec) => { saveFaces({ owner: rec }); onLogin('admin', 'เจ้าของ'); }} />
                             </div>
-                            <button type="submit" className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700 transition flex items-center justify-center gap-2 mt-4 shadow-lg">
-                                <i className="fas fa-sign-in-alt text-xl"></i> เข้าสู่ระบบ
-                            </button>
-                        </form>
+                        )}
+
+                        {mode === 'scan' && (
+                            <div className="space-y-3">
+                                <video ref={videoRef} muted playsInline className="w-full rounded-xl bg-black aspect-[4/3] object-cover" style={{ transform: 'scaleX(-1)' }} />
+                                <p className="text-sm text-center text-gray-600">{camError || msg}</p>
+                                <button onClick={() => { setMsg(''); setMode('pin'); }} className="w-full border border-gray-300 text-gray-600 font-bold py-2.5 rounded-xl hover:bg-gray-50"><i className="fas fa-key mr-2"></i>ใช้ PIN สำรอง</button>
+                            </div>
+                        )}
+
+                        {mode === 'pin' && (
+                            <form onSubmit={submitPin} className="space-y-4">
+                                {msg && <div className="bg-red-50 text-red-500 p-3 rounded-xl text-sm font-medium text-center border border-red-200">{msg}</div>}
+                                <div className="flex gap-2">
+                                    {FACE_USERS.filter(u => faces[u.id]).map(u => (
+                                        <button type="button" key={u.id} onClick={() => setPinUser(u.id)} className={`flex-1 py-2 rounded-xl text-sm font-bold border ${pinUser === u.id ? 'bg-blue-600 text-white border-blue-600' : 'text-gray-600 border-gray-300'}`}>{u.name}</button>
+                                    ))}
+                                </div>
+                                <input type="password" inputMode="numeric" maxLength={6} autoFocus value={pin} onChange={e => setPin(e.target.value.replace(/\D/g, ''))} placeholder="กรอก PIN" className="w-full p-3 border rounded-xl text-sm tracking-widest text-center focus:outline-blue-500" />
+                                <button type="submit" className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700 transition shadow-lg"><i className="fas fa-sign-in-alt mr-2"></i>เข้าสู่ระบบ</button>
+                                <button type="button" onClick={() => { setMsg(''); setMode('scan'); }} className="w-full text-sm text-gray-500 hover:text-blue-600">กลับไปสแกนใบหน้า</button>
+                            </form>
+                        )}
                     </div>
                 </div>
             );
@@ -194,14 +378,14 @@
             const mIncome = monthRows.reduce((s, r) => s + r.inc, 0);
             const mExpense = monthRows.reduce((s, r) => s + r.exp, 0);
             const todayIncome = ledger.filter(r => dayKey(r._d) === dayKey(new Date())).reduce((s, r) => s + r.inc, 0);
-            const ledgerBalance = ledger.length ? ledger[ledger.length - 1].bal : 0;
+            const mSalesProfit = monthRows.reduce((s, r) => s + (r.profit || 0), 0); // กำไรจากรายการซื้อขายสินค้า (ราคาขาย-ต้นทุน) เดือนนี้
 
             const bookCards = [
                 { label: 'วันนี้ขายได้', val: todayIncome, color: 'text-green-600', bg: 'bg-green-50' },
                 { label: 'ต้นทุนภายในร้านรวม', val: internalStoreCost, color: 'text-amber-600', bg: 'bg-amber-50' },
                 { label: 'ขายได้/รายรับเดือนนี้', val: mIncome, color: 'text-green-600', bg: 'bg-green-50' },
                 { label: 'กำไรสุทธิเดือนนี้', val: mIncome - mExpense, color: 'text-blue-600', bg: 'bg-blue-50' },
-                { label: 'ยอดคงเหลือสะสม', val: ledgerBalance, color: 'text-indigo-600', bg: 'bg-indigo-50' },
+                { label: 'กำไรจากการขายสินค้าเดือนนี้', val: mSalesProfit, color: 'text-purple-600', bg: 'bg-purple-50' },
             ];
 
             const pendingPawns = pawns.filter(p => ['อยู่ในระหว่างจำนำ', 'อยู่ในระหว่างหลุดจำนำ'].includes(p.status)).length;
@@ -436,7 +620,7 @@
         };
 
         // --- 3.2 สต็อกสินค้า (Inventory) ---
-        const InventoryTab = ({ inventory, setInventory, userRole, addTransaction, showToast }) => {
+        const InventoryTab = ({ inventory, setInventory, userRole, addTransaction, showToast, onPrint }) => {
             const [formData, setFormData] = useState({ 
                 sku: '', 
                 name: '', 
@@ -453,7 +637,23 @@
             const isPhoneCategory = formData.category === 'เครื่องใหม่' || formData.category === 'เครื่องมือ2';
             const [edit, setEdit] = useState(null);
             const adjustQty = (id, d) => setInventory(prev => prev.map(i => i.id === id ? { ...i, qty: Math.max(0, i.qty + d) } : i));
-            
+
+            // ===== รายการสั่งของ (เมื่อสต็อกเหลือน้อย) =====
+            const [orderList, setOrderList] = useState([]);
+            const [showOrderPanel, setShowOrderPanel] = useState(false);
+            const LOW_STOCK_THRESHOLD = 2;
+            const addToOrder = (item) => {
+                setOrderList(prev => prev.find(o => o.id === item.id) ? prev : [...prev, { id: item.id, sku: item.sku, name: item.name, currentQty: item.qty, orderQty: 10 }]);
+                showToast(`เพิ่ม "${item.name}" ในรายการสั่งของแล้ว`);
+                setShowOrderPanel(true);
+            };
+            const removeFromOrder = (id) => setOrderList(prev => prev.filter(o => o.id !== id));
+            const updateOrderQty = (id, val) => setOrderList(prev => prev.map(o => o.id === id ? { ...o, orderQty: Math.max(1, parseInt(val) || 1) } : o));
+            const printOrderList = () => {
+                if (orderList.length === 0) return showToast('ยังไม่มีรายการสั่งของ');
+                onPrint('restock', { items: orderList, date: new Date().toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' }) });
+            };
+
             const saveEdit = (e) => {
                 e.preventDefault();
                 setInventory(prev => prev.map(i => i.id === edit.id ? { ...edit, cost: parseFloat(edit.cost) || 0, price: parseFloat(edit.price) || 0, qty: Math.max(0, parseInt(edit.qty) || 0) } : i));
@@ -498,6 +698,10 @@
                 <div className="space-y-6 page-fade-in">
                     <div className="flex justify-between items-end">
                         <h2 className="text-2xl font-bold text-gray-800">จัดการสต็อกสินค้า</h2>
+                        <button onClick={() => setShowOrderPanel(true)} className={`relative px-4 py-2.5 rounded-xl font-bold text-sm shadow-sm transition ${orderList.length > 0 ? 'bg-orange-500 text-white hover:bg-orange-600' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>
+                            <i className="fas fa-cart-plus mr-2"></i>รายการสั่งของ
+                            {orderList.length > 0 && <span className="absolute -top-2 -right-2 bg-red-600 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center">{orderList.length}</span>}
+                        </button>
                     </div>
 
                     <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
@@ -586,13 +790,54 @@
                                         </td>
                                         {userRole === 'admin' && <td className="p-4 text-gray-500">฿{item.cost.toLocaleString()}</td>}
                                         <td className="p-4 font-bold">฿{item.price.toLocaleString()}</td>
-                                        <td className="p-4"><button onClick={() => setEdit({ ...item })} className="text-xs bg-blue-100 text-blue-700 px-3 py-1.5 rounded-lg hover:bg-blue-200 font-bold"><i className="fas fa-pen mr-1"></i>แก้ไข</button></td>
+                                        <td className="p-4 whitespace-nowrap">
+                                            <button onClick={() => setEdit({ ...item })} className="text-xs bg-blue-100 text-blue-700 px-3 py-1.5 rounded-lg hover:bg-blue-200 font-bold mr-1"><i className="fas fa-pen mr-1"></i>แก้ไข</button>
+                                            {item.qty <= LOW_STOCK_THRESHOLD && (
+                                                <button onClick={() => addToOrder(item)} className="text-xs bg-orange-100 text-orange-700 px-3 py-1.5 rounded-lg hover:bg-orange-200 font-bold" title="สต็อกใกล้หมด - เพิ่มในรายการสั่งของ"><i className="fas fa-cart-plus mr-1"></i>สั่งของ</button>
+                                            )}
+                                        </td>
                                     </tr>
                                 ))}
                             </tbody>
                         </table>
                         </div>
                     </div>
+                {showOrderPanel && (
+                        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowOrderPanel(false)}>
+                            <div onClick={e => e.stopPropagation()} className="bg-white rounded-2xl p-6 w-full max-w-2xl max-h-[90vh] overflow-auto space-y-4 modal-enter">
+                                <div className="flex justify-between items-center">
+                                    <h3 className="text-lg font-bold text-gray-800"><i className="fas fa-cart-plus text-orange-500 mr-2"></i>รายการสั่งของ (สต็อกเหลือ ≤ {LOW_STOCK_THRESHOLD} ชิ้น)</h3>
+                                    <button onClick={() => setShowOrderPanel(false)} className="text-gray-400 hover:text-gray-600"><i className="fas fa-times text-lg"></i></button>
+                                </div>
+                                {orderList.length === 0 ? (
+                                    <p className="text-center text-gray-400 py-8">ยังไม่มีรายการ — กดปุ่ม "สั่งของ" ที่สินค้าซึ่งเหลือน้อยในตารางสต็อก</p>
+                                ) : (
+                                    <div className="border rounded-xl overflow-hidden">
+                                        <table className="w-full text-left text-sm">
+                                            <thead className="bg-slate-50 text-slate-600">
+                                                <tr><th className="p-2.5">สินค้า</th><th className="p-2.5">คงเหลือ</th><th className="p-2.5">จำนวนที่จะสั่ง</th><th className="p-2.5"></th></tr>
+                                            </thead>
+                                            <tbody>
+                                                {orderList.map(o => (
+                                                    <tr key={o.id} className="border-t">
+                                                        <td className="p-2.5 font-medium">{o.name}<div className="text-xs text-gray-400 font-mono">{o.sku}</div></td>
+                                                        <td className="p-2.5 text-red-500 font-bold">{o.currentQty}</td>
+                                                        <td className="p-2.5"><input type="number" min="1" value={o.orderQty} onChange={e => updateOrderQty(o.id, e.target.value)} className="w-20 border rounded-lg p-1.5 text-sm" /></td>
+                                                        <td className="p-2.5 text-right"><button onClick={() => removeFromOrder(o.id)} className="text-red-500 hover:bg-red-50 p-1.5 rounded-lg"><i className="fas fa-trash"></i></button></td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                )}
+                                <div className="flex gap-3">
+                                    <button type="button" onClick={() => setShowOrderPanel(false)} className="flex-1 border py-2.5 rounded-xl font-bold text-gray-600 hover:bg-gray-50">ปิด</button>
+                                    <button type="button" onClick={printOrderList} disabled={orderList.length === 0} className="flex-1 bg-orange-500 text-white py-2.5 rounded-xl font-bold hover:bg-orange-600 shadow-md disabled:opacity-40 disabled:cursor-not-allowed"><i className="fas fa-print mr-2"></i>พิมพ์ใบสั่งซื้อ (A4)</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
                 {edit && (
                         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setEdit(null)}>
                             <form onSubmit={saveEdit} onClick={e => e.stopPropagation()} className="bg-white rounded-2xl p-6 w-full max-w-lg max-h-[90vh] overflow-auto space-y-4 modal-enter">
@@ -1003,7 +1248,7 @@
             const [editIdx, setEditIdx] = useState(null);
             const [draft, setDraft] = useState({});
             const [showAdd, setShowAdd] = useState(false);
-            const blank = () => ({ date: dayKey(new Date()), type: 'รายรับ', detail: '', ref: '', amount: '', note: '' });
+            const blank = () => ({ date: dayKey(new Date()), type: 'รายรับ', detail: '', ref: '', amount: '', note: '', profit: '' });
             const [nr, setNr] = useState(blank());
             const inp = 'w-full border rounded-lg p-2 text-sm';
             const setDate = (ymd, base) => { const [y, m, d] = ymd.split('-').map(Number); const nd = new Date(base || new Date()); nd.setFullYear(y, m - 1, d); return nd; };
@@ -1021,11 +1266,10 @@
                 return monthRows;
             }, [monthRows, ledgerTab]);
 
-            const before = ledger.filter(r => r._d < new Date(selectedYear, selectedMonth, 1));
-            const opening = before.length ? before[before.length - 1].bal : 0;
             const totalIncome = monthRows.reduce((s, r) => s + r.inc, 0);
             const totalExpense = monthRows.reduce((s, r) => s + r.exp, 0);
             const netProfit = totalIncome - totalExpense;
+            const monthSalesProfit = monthRows.reduce((s, r) => s + (r.profit || 0), 0); // กำไรจากรายการซื้อขายสินค้า (ราคาขาย-ต้นทุน) เดือนนี้
             const todayIncome = ledger.filter(r => dayKey(r._d) === dayKey(now)).reduce((s, r) => s + r.inc, 0);
 
             const days = [];
@@ -1036,12 +1280,12 @@
                 g.items.push(r);
             });
 
-            const startEdit = (r) => { setEditIdx(r._i); setDraft({ date: dayKey(r._d), detail: r.detail || '', ref: r.ref || '', income: r.inc || '', expense: r.exp || '', note: r.note || '' }); };
+            const startEdit = (r) => { setEditIdx(r._i); setDraft({ date: dayKey(r._d), detail: r.detail || '', ref: r.ref || '', income: r.inc || '', expense: r.exp || '', note: r.note || '', profit: (r.profit !== null && r.profit !== undefined) ? r.profit : '' }); };
             const saveEdit = (r) => {
                 const inc = parseFloat(draft.income) || 0, exp = parseFloat(draft.expense) || 0;
                 if ((inc > 0) === (exp > 0)) { showToast('กรอกยอดรายรับ หรือ รายจ่าย อย่างใดอย่างหนึ่งเท่านั้น'); return; }
                 const nd = setDate(draft.date, r._d);
-                setTransactions(prev => prev.map((t, i) => i === r._i ? { ...t, date: nd.toLocaleString('th-TH'), rawDate: nd.toISOString(), type: inc > 0 ? 'รายรับ' : 'รายจ่าย', amount: inc > 0 ? inc : exp, detail: draft.detail, ref: draft.ref, note: draft.note } : t));
+                setTransactions(prev => prev.map((t, i) => i === r._i ? { ...t, date: nd.toLocaleString('th-TH'), rawDate: nd.toISOString(), type: inc > 0 ? 'รายรับ' : 'รายจ่าย', amount: inc > 0 ? inc : exp, detail: draft.detail, ref: draft.ref, note: draft.note, profit: draft.profit !== '' ? (parseFloat(draft.profit) || 0) : null } : t));
                 setEditIdx(null);
                 showToast('บันทึกการแก้ไขแล้ว');
             };
@@ -1057,7 +1301,7 @@
                 const amount = parseFloat(nr.amount) || 0;
                 if (amount <= 0) { showToast('กรุณากรอกจำนวนเงิน'); return; }
                 const nd = setDate(nr.date);
-                setTransactions(prev => [{ id: Date.now(), date: nd.toLocaleString('th-TH'), rawDate: nd.toISOString(), type: nr.type, detail: nr.detail, amount, qty: '-', ref: nr.ref, note: nr.note }, ...prev]);
+                setTransactions(prev => [{ id: Date.now(), date: nd.toLocaleString('th-TH'), rawDate: nd.toISOString(), type: nr.type, detail: nr.detail, amount, qty: '-', ref: nr.ref, note: nr.note, profit: nr.profit !== '' ? (parseFloat(nr.profit) || 0) : null }, ...prev]);
                 setNr(blank());
                 setShowAdd(false);
                 showToast('เพิ่มรายการเรียบร้อย');
@@ -1070,7 +1314,7 @@
                 { label: `รายรับรวมเดือน${TH_MONTHS[selectedMonth]}`, val: totalIncome, c: 'text-green-600', b: 'border-green-100' },
                 { label: 'รายจ่ายรวมเดือนนี้', val: totalExpense, c: 'text-red-600', b: 'border-red-100' },
                 { label: 'กำไรสุทธิเดือนนี้', val: netProfit, c: 'text-blue-600', b: 'border-blue-100' },
-                { label: 'ยอดคงเหลือสิ้นเดือน', val: opening + netProfit, c: 'text-indigo-600', b: 'border-indigo-100' },
+                { label: 'กำไรจากการขายสินค้าเดือนนี้', val: monthSalesProfit, c: 'text-purple-600', b: 'border-purple-100' },
             ];
 
             return (
@@ -1127,7 +1371,8 @@
                             <div className="col-span-2"><label className="text-xs text-gray-500">รายการ (คำอธิบาย)</label><input required value={nr.detail} onChange={e => setNr({ ...nr, detail: e.target.value })} className={inp} /></div>
                             <div><label className="text-xs text-gray-500">เลขที่เอกสารอ้างอิง</label><input value={nr.ref} onChange={e => setNr({ ...nr, ref: e.target.value })} className={inp} /></div>
                             <div><label className="text-xs text-gray-500">จำนวนเงิน (บาท)</label><input type="number" required min="0" step="any" value={nr.amount} onChange={e => setNr({ ...nr, amount: e.target.value })} className={inp} /></div>
-                            <div className="col-span-2 md:col-span-5"><label className="text-xs text-gray-500">หมายเหตุ</label><input value={nr.note} onChange={e => setNr({ ...nr, note: e.target.value })} className={inp} /></div>
+                            <div><label className="text-xs text-gray-500">กำไร (บาท) (ถ้ามี)</label><input type="number" step="any" placeholder="-" value={nr.profit} onChange={e => setNr({ ...nr, profit: e.target.value })} className={inp} /></div>
+                            <div className="col-span-2 md:col-span-4"><label className="text-xs text-gray-500">หมายเหตุ</label><input value={nr.note} onChange={e => setNr({ ...nr, note: e.target.value })} className={inp} /></div>
                             <button type="submit" className="bg-green-600 text-white py-2.5 rounded-xl font-bold text-sm hover:bg-green-700 shadow">บันทึก</button>
                         </form>
                     )}
@@ -1138,18 +1383,15 @@
                                 <thead className="bg-slate-50 text-slate-600 text-sm">
                                     <tr>
                                         <th className="p-3.5 border-b">วันที่</th><th className="p-3.5 border-b">รายการ (คำอธิบาย)</th><th className="p-3.5 border-b">เลขที่เอกสารอ้างอิง</th>
-                                        <th className="p-3.5 border-b text-right">รายรับ (บาท)</th><th className="p-3.5 border-b text-right">รายจ่าย (บาท)</th><th className="p-3.5 border-b text-right">ยอดคงเหลือ (บาท)</th>
+                                        <th className="p-3.5 border-b text-right">รายรับ (บาท)</th><th className="p-3.5 border-b text-right">รายจ่าย (บาท)</th><th className="p-3.5 border-b text-right">กำไร (บาท)</th>
                                         <th className="p-3.5 border-b">หมายเหตุ</th><th className="p-3.5 border-b text-center">จัดการ</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <tr className="bg-slate-100 text-sm font-bold text-slate-600">
-                                        <td className="p-3.5" colSpan={5}>ยอดยกมา (ต้นเดือน{TH_MONTHS[selectedMonth]})</td>
-                                        <td className="p-3.5 text-right">{opening.toLocaleString()}</td><td colSpan={2}></td>
-                                    </tr>
                                     {days.length === 0 && <tr><td colSpan={8} className="p-8 text-center text-gray-400">ไม่มีรายการในส่วนนี้</td></tr>}
                                     {days.map(g => {
                                         const dInc = g.items.reduce((s, r) => s + r.inc, 0), dExp = g.items.reduce((s, r) => s + r.exp, 0);
+                                        const dProfit = g.items.reduce((s, r) => s + (r.profit || 0), 0);
                                         return (
                                             <React.Fragment key={g.k}>
                                                 {g.items.map(r => editIdx === r._i ? (
@@ -1159,7 +1401,7 @@
                                                         <td className="p-2"><input value={draft.ref} onChange={e => setDraft({ ...draft, ref: e.target.value })} className={inp} /></td>
                                                         <td className="p-2"><input type="number" min="0" step="any" value={draft.income} onChange={e => setDraft({ ...draft, income: e.target.value })} className={inp + ' text-right'} /></td>
                                                         <td className="p-2"><input type="number" min="0" step="any" value={draft.expense} onChange={e => setDraft({ ...draft, expense: e.target.value })} className={inp + ' text-right'} /></td>
-                                                        <td className="p-2 text-right text-xs text-gray-400">คำนวณอัตโนมัติ</td>
+                                                        <td className="p-2"><input type="number" step="any" placeholder="-" value={draft.profit} onChange={e => setDraft({ ...draft, profit: e.target.value })} className={inp + ' text-right'} /></td>
                                                         <td className="p-2"><input value={draft.note} onChange={e => setDraft({ ...draft, note: e.target.value })} className={inp} /></td>
                                                         <td className="p-2 text-center whitespace-nowrap">
                                                             <button onClick={() => saveEdit(r)} className="text-green-600 hover:bg-green-100 p-2 rounded-lg" title="บันทึก"><i className="fas fa-check"></i></button>
@@ -1176,7 +1418,7 @@
                                                         <td className="p-3.5 text-gray-500 whitespace-nowrap">{r.ref || '-'}</td>
                                                         <td className="p-3.5 text-right font-bold text-green-600">{r.inc ? r.inc.toLocaleString() : ''}</td>
                                                         <td className="p-3.5 text-right font-bold text-red-600">{r.exp ? r.exp.toLocaleString() : ''}</td>
-                                                        <td className="p-3.5 text-right font-bold text-gray-800">{r.bal.toLocaleString()}</td>
+                                                        <td className="p-3.5 text-right font-bold text-purple-600">{(r.profit !== null && r.profit !== undefined) ? r.profit.toLocaleString() : '-'}</td>
                                                         <td className="p-3.5 text-gray-500">{r.note}</td>
                                                         <td className="p-3.5 text-center whitespace-nowrap">
                                                             <button onClick={() => startEdit(r)} className="text-blue-600 hover:bg-blue-100 p-2 rounded-lg" title="แก้ไข"><i className="fas fa-edit"></i></button>
@@ -1188,7 +1430,7 @@
                                                     <td className="p-3.5 text-amber-800" colSpan={3}>สรุปวันที่ {g.d.toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' })} — ขายได้วันนี้ ฿{dInc.toLocaleString()}</td>
                                                     <td className="p-3.5 text-right text-green-700">{dInc.toLocaleString()}</td>
                                                     <td className="p-3.5 text-right text-red-700">{dExp.toLocaleString()}</td>
-                                                    <td className="p-3.5 text-right">{g.items[g.items.length - 1].bal.toLocaleString()}</td>
+                                                    <td className="p-3.5 text-right text-purple-700">{dProfit.toLocaleString()}</td>
                                                     <td className="p-3.5 text-amber-800" colSpan={2}>สุทธิ ฿{(dInc - dExp).toLocaleString()}</td>
                                                 </tr>
                                             </React.Fragment>
@@ -1198,7 +1440,7 @@
                                         <td className="p-3.5 text-blue-800" colSpan={3}>รวมทั้งเดือน {TH_MONTHS[selectedMonth]} {selectedYear} — ขายได้ ฿{totalIncome.toLocaleString()}</td>
                                         <td className="p-3.5 text-right text-green-700">{totalIncome.toLocaleString()}</td>
                                         <td className="p-3.5 text-right text-red-700">{totalExpense.toLocaleString()}</td>
-                                        <td className="p-3.5 text-right text-blue-800">{(opening + netProfit).toLocaleString()}</td>
+                                        <td className="p-3.5 text-right text-purple-700">{monthSalesProfit.toLocaleString()}</td>
                                         <td colSpan={2}></td>
                                     </tr>
                                 </tbody>
@@ -1258,7 +1500,8 @@
                 
                 cart.forEach(cartItem => {
                     setInventory(prev => prev.map(i => i.id === cartItem.id ? { ...i, qty: i.qty - cartItem.qty } : i));
-                    addTransaction('รายรับ', `ขายสินค้า (POS): ${cartItem.name}`, cartItem.price * cartItem.qty, cartItem.qty, saleId);
+                    const itemProfit = (cartItem.price - (cartItem.cost || 0)) * cartItem.qty; // ราคาขาย - ราคาทุน
+                    addTransaction('รายรับ', `ขายสินค้า (POS): ${cartItem.name}`, cartItem.price * cartItem.qty, cartItem.qty, saleId, '', itemProfit);
                 });
 
                 const sale = { id: saleId, date: new Date().toISOString(), total, items: cart };
@@ -1357,6 +1600,8 @@
         function App() {
             const [authState, setAuthState] = useState('login'); 
             const [userRole, setUserRole] = useState('');
+            const [userName, setUserName] = useState('');
+            const [showFaceMgr, setShowFaceMgr] = useState(false);
             const [activeTab, setActiveTab] = useState('dashboard');
             const [sidebarOpen, setSidebarOpen] = useState(false);
             const [toastMessage, setToastMessage] = useState('');
@@ -1434,7 +1679,7 @@
 
             const showToast = (msg) => setToastMessage(msg);
             
-            const addTransaction = (type, detail, amount = 0, qty = '-', ref = '', note = '') => {
+            const addTransaction = (type, detail, amount = 0, qty = '-', ref = '', note = '', profit = null) => {
                 setTransactions(prev => [{ 
                     id: Date.now(), 
                     date: new Date().toLocaleString('th-TH'), 
@@ -1444,7 +1689,8 @@
                     amount,
                     qty,
                     ref,
-                    note
+                    note,
+                    profit // กำไร = ราคาขาย - ราคาทุน (เฉพาะรายการซื้อขายสินค้า), null = ไม่ใช่รายการขายสินค้า
                 }, ...prev]);
             };
 
@@ -1453,7 +1699,7 @@
                 setTimeout(() => window.print(), 300);
             };
 
-            if (authState === 'login') return <LoginView onLogin={(role) => { setUserRole(role); setAuthState('authenticated'); setActiveTab('dashboard'); }} />;
+            if (authState === 'login') return <LoginView onLogin={(role, name) => { setUserRole(role); setUserName(name || ''); setAuthState('authenticated'); setActiveTab('dashboard'); }} />;
 
             const menuItems = [
                 { id: 'dashboard', label: 'แดชบอร์ดสรุป', icon: 'fas fa-chart-bar', role: 'all' },
@@ -1581,6 +1827,44 @@
                                     </table>
                                 </div>
                             )}
+
+                            {printConfig.type === 'restock' && (
+                                <div className="max-w-3xl mx-auto p-8">
+                                    <div className="text-center border-b pb-4 mb-6">
+                                        <img src={LOGO_SRC} alt="GP Mobile shop" className="w-16 h-16 mx-auto mb-2" />
+                                        <h1 className="text-3xl font-bold">ใบสั่งซื้อสินค้า</h1>
+                                        <h2 className="text-xl font-bold mt-2">GP Mobile shop</h2>
+                                        <p className="text-gray-600 mt-1">เบอร์โทร: 093-014-5788 | Line: @372ipazw</p>
+                                    </div>
+                                    <div className="flex justify-between mb-6">
+                                        <p><strong>วันที่ออกใบสั่งซื้อ:</strong> {printConfig.data.date}</p>
+                                        <p><strong>จำนวนรายการ:</strong> {printConfig.data.items.length} รายการ</p>
+                                    </div>
+                                    <table className="w-full text-left border-collapse mb-24">
+                                        <thead>
+                                            <tr className="border-b-2 border-black">
+                                                <th className="py-2">#</th><th className="py-2">รหัส SKU</th><th className="py-2">ชื่อสินค้า</th>
+                                                <th className="py-2 text-right">คงเหลือปัจจุบัน</th><th className="py-2 text-right">จำนวนที่สั่ง</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {printConfig.data.items.map((o, i) => (
+                                                <tr key={o.id} className="border-b">
+                                                    <td className="py-3">{i + 1}</td>
+                                                    <td className="py-3 font-mono">{o.sku}</td>
+                                                    <td className="py-3">{o.name}</td>
+                                                    <td className="py-3 text-right text-red-600 font-bold">{o.currentQty}</td>
+                                                    <td className="py-3 text-right font-bold">{o.orderQty}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                    <div className="flex justify-between">
+                                        <div className="text-center w-48 border-t border-black pt-2 text-sm">ผู้สั่งซื้อ</div>
+                                        <div className="text-center w-48 border-t border-black pt-2 text-sm">ผู้อนุมัติ</div>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     )}
 
@@ -1589,6 +1873,8 @@
                         <Toast message={toastMessage} onClose={() => setToastMessage('')} />
 
                         {sidebarOpen && <div className="fixed inset-0 bg-black/50 z-20 md:hidden" onClick={() => setSidebarOpen(false)}></div>}
+
+                        {showFaceMgr && <FaceManager onClose={() => setShowFaceMgr(false)} />}
 
                         {/* Sidebar Navigation */}
                         <aside className={`fixed md:static inset-y-0 left-0 w-64 bg-slate-900 text-white flex flex-col shadow-xl z-30 shrink-0 transform transition-transform duration-300 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0`}>
@@ -1606,9 +1892,10 @@
                             <div className="p-4 border-t border-slate-800 bg-slate-950">
                                 <div className="flex items-center text-sm mb-4 px-2 text-slate-300">
                                     <div className="w-8 h-8 bg-slate-800 rounded-full flex items-center justify-center mr-3"><i className="fas fa-user"></i></div>
-                                    <div><p className="font-bold capitalize text-white">{userRole}</p><p className="text-xs opacity-70">ออนไลน์</p></div>
+                                    <div><p className="font-bold capitalize text-white">{userName || userRole}</p><p className="text-xs opacity-70">ออนไลน์</p></div>
                                 </div>
-                                <button onClick={() => {setAuthState('login'); setUserRole('');}} className="w-full flex items-center px-4 py-2.5 text-red-400 hover:bg-red-500/10 rounded-xl transition text-sm font-medium">
+                                {userRole === 'admin' && <button onClick={() => setShowFaceMgr(true)} className="w-full flex items-center px-4 py-2.5 mb-1 text-slate-300 hover:bg-slate-800 rounded-xl transition text-sm font-medium"><i className="fas fa-user-shield mr-3"></i> จัดการใบหน้า / PIN</button>}
+                                <button onClick={() => {setAuthState('login'); setUserRole(''); setUserName(''); setShowFaceMgr(false);}} className="w-full flex items-center px-4 py-2.5 text-red-400 hover:bg-red-500/10 rounded-xl transition text-sm font-medium">
                                     <i className="fas fa-sign-out-alt mr-3"></i> ออกจากระบบ
                                 </button>
                             </div>
@@ -1625,7 +1912,7 @@
                             <div className="flex-1 overflow-auto p-4 sm:p-6 lg:p-8">
                                 <div className="max-w-7xl mx-auto h-full pb-20">
                                     {activeTab === 'dashboard' && <DashboardTab inventory={inventory} pawns={pawns} repairs={repairs} sales={sales} transactions={transactions} />}
-                                    {activeTab === 'inventory' && <InventoryTab inventory={inventory} setInventory={setInventory} userRole={userRole} addTransaction={addTransaction} showToast={showToast} />}
+                                    {activeTab === 'inventory' && <InventoryTab inventory={inventory} setInventory={setInventory} userRole={userRole} addTransaction={addTransaction} showToast={showToast} onPrint={handlePrint} />}
                                     {activeTab === 'repair' && <RepairTab repairs={repairs} setRepairs={setRepairs} inventory={inventory} setInventory={setInventory} addTransaction={addTransaction} showToast={showToast} onPrint={handlePrint} />}
                                     {activeTab === 'pawn' && <PawnTab pawns={pawns} setPawns={setPawns} showToast={showToast} addTransaction={addTransaction} />}
                                     {activeTab === 'crm' && <CRMTab repairs={repairs} pawns={pawns} onPrintRepair={handlePrint} />}
