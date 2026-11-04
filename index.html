@@ -762,17 +762,30 @@
             };
 
             const handleUpdateStatus = (id, currentStatus, partId) => {
-                if (currentStatus !== 'ซ่อมเสร็จสิ้น') {
-                    const repair = repairs.find(r => r.id === id);
-                    const part = inventory.find(i => i.id === partId);
-                    if (part) {
-                        if (part.qty <= 0) { alert('อะไหล่ชิ้นนี้หมดสต็อก ไม่สามารถตัดสต็อกได้!'); return; }
-                        setInventory(inventory.map(i => i.id === partId ? { ...i, qty: i.qty - 1 } : i));
-                    }
-                    setRepairs(repairs.map(r => r.id === id ? { ...r, status: 'ซ่อมเสร็จสิ้น' } : r));
-                    addTransaction('รายรับ', `งานซ่อมบิล ${id} (${repair.model})`, repair.price, 1, id);
-                    showToast(`อัปเดตสถานะและตัดสต็อกอะไหล่เรียบร้อย`);
+                if (currentStatus === 'ซ่อมเสร็จสิ้น') return;
+                const repair = repairs.find(r => r.id === id);
+                if (!repair) return;
+                const part = partId ? inventory.find(i => i.id === partId) : null;
+
+                // 1) ตัดสต็อกอะไหล่ที่ใช้ในงานซ่อมออกจากคลังสินค้า
+                if (part) {
+                    if (part.qty <= 0) { alert('อะไหล่ชิ้นนี้หมดสต็อก ไม่สามารถตัดสต็อกได้!'); return; }
+                    setInventory(prev => prev.map(i => i.id === partId ? { ...i, qty: i.qty - 1 } : i));
                 }
+
+                // 2) กำไรงานซ่อม = ค่าซ่อม - ต้นทุนอะไหล่ (ติดลบได้ถ้าค่าซ่อมต่ำกว่าทุนอะไหล่)
+                const price = repair.price || 0;
+                const partCost = part ? (part.cost || 0) : 0;
+                const profit = price - partCost;
+
+                setRepairs(repairs.map(r => r.id === id ? { ...r, status: 'ซ่อมเสร็จสิ้น', cost: partCost, profit } : r));
+
+                // 3) ลงสมุดบัญชี: รายรับ = ค่าซ่อม, กำไร = ค่าซ่อม - ทุนอะไหล่
+                const note = part
+                    ? `ใช้อะไหล่: ${part.name} (ทุน ฿${partCost.toLocaleString()}) กำไร ฿${profit.toLocaleString()}`
+                    : 'ไม่ใช้อะไหล่ (กำไรเต็มจำนวน)';
+                addTransaction('รายรับ', `งานซ่อมบิล ${id} (${repair.model})`, price, 1, id, note, profit);
+                showToast(part ? `จบงานซ่อม ตัดสต็อก ${part.name} และบันทึกกำไร ฿${profit.toLocaleString()} แล้ว` : `จบงานซ่อม บันทึกกำไร ฿${profit.toLocaleString()} แล้ว`);
             };
 
             return (
@@ -788,7 +801,7 @@
                                 <label className="text-xs text-gray-500">เลือกอะไหล่ (ถ้ามี)</label>
                                 <select value={formData.partId} onChange={e => setFormData({...formData, partId: e.target.value})} className="w-full border p-2.5 rounded-xl text-sm bg-white">
                                     <option value="">-- ไม่ใช้อะไหล่ --</option>
-                                    {inventory.map(i => <option key={i.id} value={i.id} disabled={i.qty<=0}>{i.name} (เหลือ {i.qty})</option>)}
+                                    {inventory.filter(i => i.category === 'อะไหล่').map(i => <option key={i.id} value={i.id} disabled={i.qty<=0}>{i.name} (เหลือ {i.qty})</option>)}
                                 </select>
                             </div>
                             <div><label className="text-xs text-gray-500">ราคาประเมิน (฿)</label><input required type="number" value={formData.price} onChange={e => setFormData({...formData, price: e.target.value})} className="w-full border p-2.5 rounded-xl text-sm" /></div>
@@ -808,7 +821,7 @@
                                         <td className="p-4"><div className="font-mono font-bold text-orange-600">{r.id}</div><div className="text-xs text-gray-400">{r.date}</div></td>
                                         <td className="p-4"><div className="font-medium">{r.name}</div><div className="text-xs text-gray-500">{r.phone}</div></td>
                                         <td className="p-4"><div className="font-medium">{r.model} - {r.issue}</div><div className="text-xs text-blue-500">อะไหล่: {r.partName}</div></td>
-                                        <td className="p-4 font-bold text-gray-700">฿{r.price?.toLocaleString()}</td>
+                                        <td className="p-4 font-bold text-gray-700">฿{r.price?.toLocaleString()}<div className="text-xs font-medium text-purple-600">กำไร ฿{((r.price || 0) - (r.cost || 0)).toLocaleString()}</div></td>
                                         <td className="p-4"><span className={`px-2.5 py-1 rounded-full text-xs font-bold ${r.status === 'ซ่อมเสร็จสิ้น' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>{r.status}</span></td>
                                         <td className="p-4 text-center">
                                             {r.status !== 'ซ่อมเสร็จสิ้น' ? (
