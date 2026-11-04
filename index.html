@@ -19,8 +19,6 @@
     <!-- Babel for in-browser JSX compilation -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-    <!-- Face recognition (สแกนใบหน้าเข้าสู่ระบบ) -->
-    <script src="https://cdn.jsdelivr.net/gh/vladmandic/face-api@1.7.12/dist/face-api.js"></script>
 
     <style>
         /* สไตล์สำหรับการพิมพ์ (A4 Print) */
@@ -81,6 +79,45 @@
 
         // ===== ตัวช่วยสมุดบัญชี =====
         const TH_MONTHS = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+
+        // รายชื่อรุ่นเครื่องตามแบรนด์ (ใช้ร่วมกันทั้งหน้าสต็อกสินค้าและหน้ารับจำนำ) - เลือก "อื่นๆ" เพื่อพิมพ์รุ่นเองได้เสมอ
+        const PHONE_MODELS = {
+            'Apple': ['iPhone 11', 'iPhone 11 Pro', 'iPhone 11 Promax', 'iPhone 12', 'iPhone 12 Mini', 'iPhone 12 Pro', 'iPhone 12 Promax', 'iPhone 13', 'iPhone 13 Mini', 'iPhone 13 Pro', 'iPhone 13 Promax', 'iPhone 14', 'iPhone 14 Plus', 'iPhone 14 Pro', 'iPhone 14 Promax', 'iPhone 15', 'iPhone 15 Plus', 'iPhone 15 Pro', 'iPhone 15 Promax', 'iPhone 16', 'iPhone 16 Plus', 'iPhone 16 Pro', 'iPhone 16 Promax', 'iPhone 16e', 'iPhone 17', 'iPhone 17 Air', 'iPhone 17 Pro', 'iPhone 17 Promax', 'iPhone SE'],
+            'Samsung': ['Galaxy A05', 'Galaxy A05s', 'Galaxy A15', 'Galaxy A16', 'Galaxy A25', 'Galaxy A35', 'Galaxy A55', 'Galaxy S21', 'Galaxy S22', 'Galaxy S23', 'Galaxy S23 Ultra', 'Galaxy S24', 'Galaxy S24 Ultra', 'Galaxy S25', 'Galaxy S25 Ultra', 'Galaxy Note 20', 'Galaxy Note 20 Ultra', 'Galaxy Z Flip5', 'Galaxy Z Flip6', 'Galaxy Z Fold5', 'Galaxy Z Fold6'],
+            'OPPO': ['OPPO A3', 'OPPO A5', 'OPPO A5 Pro', 'OPPO A18', 'OPPO A38', 'OPPO A53', 'OPPO A58', 'OPPO A78', 'OPPO A98', 'OPPO Reno 11', 'OPPO Reno 12', 'OPPO Reno 13', 'OPPO Reno 15', 'OPPO Find X7', 'OPPO Find X8', 'OPPO Find X10'],
+            'Vivo': ['Vivo Y17s', 'Vivo Y18', 'Vivo Y28', 'Vivo Y36', 'Vivo Y100', 'Vivo V29', 'Vivo V30', 'Vivo V40', 'Vivo X90', 'Vivo X100', 'Vivo X200'],
+            'Xiaomi': ['Redmi 12', 'Redmi 13', 'Redmi Note 12', 'Redmi Note 13', 'Redmi Note 14', 'Poco X6', 'Poco F6', 'Xiaomi 13', 'Xiaomi 14', 'Xiaomi 15'],
+            'Realme': ['Realme C53', 'Realme C55', 'Realme C61', 'Realme 11', 'Realme 12', 'Realme 12 Pro', 'Realme 13 Pro', 'Realme Narzo 70'],
+        };
+        const PHONE_BRANDS = Object.keys(PHONE_MODELS);
+
+        // ตัวเลือก แบรนด์ + รุ่น แบบใช้ร่วมกัน (สต็อกสินค้า / รับจำนำ)
+        // onChange จะได้ {brand, model, resolved} - resolved คือชื่อสินค้าสุดท้าย (ว่างถ้ายังต้องพิมพ์เอง)
+        const needsCustomName = (brand, model) => brand === 'อื่นๆ' || model === '__other__';
+        const BrandModelPicker = ({ brand, model, onChange }) => {
+            return (
+                <>
+                    <div>
+                        <label className="text-xs text-gray-500">แบรนด์</label>
+                        <select value={brand} onChange={e => onChange({ brand: e.target.value, model: '', resolved: '' })} className="w-full border p-2.5 rounded-xl text-sm bg-white">
+                            <option value="">-- เลือกแบรนด์ --</option>
+                            {PHONE_BRANDS.map(b => <option key={b} value={b}>{b}</option>)}
+                            <option value="อื่นๆ">อื่นๆ</option>
+                        </select>
+                    </div>
+                    {brand && brand !== 'อื่นๆ' && (
+                        <div>
+                            <label className="text-xs text-gray-500">รุ่น</label>
+                            <select value={model} onChange={e => onChange({ brand, model: e.target.value, resolved: e.target.value === '__other__' ? '' : e.target.value })} className="w-full border p-2.5 rounded-xl text-sm bg-white">
+                                <option value="">-- เลือกรุ่น --</option>
+                                {PHONE_MODELS[brand].map(m => <option key={m} value={m}>{m}</option>)}
+                                <option value="__other__">อื่นๆ (พิมพ์เอง)</option>
+                            </select>
+                        </div>
+                    )}
+                </>
+            );
+        };
         const txDate = (t) => { const d = new Date(t.rawDate || t.id); return isNaN(d) ? new Date() : d; };
         // โลโก้ร้าน (SVG ฝังในไฟล์) - ถ้าต้องการเปลี่ยนเป็นรูปโลโก้ของร้าน แก้ที่ค่านี้ที่เดียว
         const LOGO_SRC = "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'%3E%3Crect%20width='64'%20height='64'%20rx='14'%20fill='%232563eb'/%3E%3Ctext%20x='32'%20y='43'%20font-family='Arial,Helvetica,sans-serif'%20font-size='30'%20font-weight='700'%20fill='%23ffffff'%20text-anchor='middle'%3EGP%3C/text%3E%3C/svg%3E";
@@ -125,182 +162,21 @@
         };
 
         // ==========================================
-        // 2. สแกนใบหน้าเข้าสู่ระบบ (Face Login) - เจ้าของ + ผู้จัดการ 1 คน
+        // 2. เข้าสู่ระบบ (Login)
         // ==========================================
-        const FACE_KEY = 'gp_face_auth';
-        const FACE_MODEL_URL = 'https://cdn.jsdelivr.net/gh/vladmandic/face-api@1.7.12/model/';
-        const FACE_USERS = [
-            { id: 'owner', name: 'เจ้าของ', role: 'admin' },
-            { id: 'manager', name: 'ผู้จัดการ', role: 'manager' }
-        ];
-        const FACE_MATCH_DIST = 0.5; // ยิ่งน้อยยิ่งเข้มงวด
-
-        const loadFaces = () => { try { return JSON.parse(localStorage.getItem(FACE_KEY)) || {}; } catch (e) { return {}; } };
-        const saveFaces = (d) => { try { localStorage.setItem(FACE_KEY, JSON.stringify(d)); } catch (e) {} };
-        const hashPin = async (pin) => {
-            try {
-                const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('gp:' + pin));
-                return Array.from(new Uint8Array(b)).map(x => x.toString(16).padStart(2, '0')).join('');
-            } catch (e) { return 'p:' + btoa(pin); }
-        };
-
-        let faceModelsPromise = null;
-        const loadFaceModels = () => faceModelsPromise || (faceModelsPromise = (async () => {
-            await Promise.all([
-                faceapi.nets.tinyFaceDetector.loadFromUri(FACE_MODEL_URL),
-                faceapi.nets.faceLandmark68Net.loadFromUri(FACE_MODEL_URL),
-                faceapi.nets.faceRecognitionNet.loadFromUri(FACE_MODEL_URL)
-            ]);
-        })().catch(e => { faceModelsPromise = null; throw e; }));
-
-        const getDescriptor = async (video) => {
-            const r = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 })).withFaceLandmarks().withFaceDescriptor();
-            return r ? r.descriptor : null;
-        };
-        const faceDist = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) { const d = a[i] - b[i]; s += d * d; } return Math.sqrt(s); };
-        const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-
-        const useCamera = (videoRef, active) => {
-            const [camError, setCamError] = useState('');
-            useEffect(() => {
-                if (!active) return;
-                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { setCamError('เบราว์เซอร์นี้ไม่รองรับการเปิดกล้อง'); return; }
-                let stream = null, cancelled = false;
-                navigator.mediaDevices.getUserMedia({ video: { width: 480, height: 360, facingMode: 'user' } })
-                    .then(s => {
-                        if (cancelled) { s.getTracks().forEach(t => t.stop()); return; }
-                        stream = s; videoRef.current.srcObject = s; videoRef.current.play();
-                    })
-                    .catch(() => setCamError('เปิดกล้องไม่ได้ กรุณากดอนุญาตการใช้กล้อง หรือใช้ PIN สำรอง'));
-                return () => { cancelled = true; if (stream) stream.getTracks().forEach(t => t.stop()); };
-            }, [active]);
-            return camError;
-        };
-
-        // ลงทะเบียนใบหน้า + ตั้ง PIN สำรอง
-        const FaceEnroll = ({ user, onSaved, onCancel }) => {
-            const videoRef = useRef(null);
-            const [ready, setReady] = useState(false);
-            const [busy, setBusy] = useState(false);
-            const [pin, setPin] = useState('');
-            const [msg, setMsg] = useState('กำลังโหลดระบบสแกนใบหน้า (ต้องต่ออินเทอร์เน็ต)...');
-            const camError = useCamera(videoRef, true);
-            useEffect(() => {
-                let alive = true;
-                loadFaceModels().then(() => { if (alive) { setReady(true); setMsg('มองตรงที่กล้อง ตั้ง PIN แล้วกดบันทึกใบหน้า'); } })
-                    .catch(() => { if (alive) setMsg('โหลดระบบสแกนไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วเปิดหน้านี้ใหม่'); });
-                return () => { alive = false; };
-            }, []);
-            const capture = async () => {
-                if (!/^\d{4,6}$/.test(pin)) { setMsg('กรุณาตั้ง PIN สำรองเป็นตัวเลข 4-6 หลัก'); return; }
-                setBusy(true);
-                const samples = [];
-                for (let i = 0; i < 3; i++) {
-                    setMsg(`กำลังบันทึกใบหน้า ${i + 1}/3 ... ขยับหน้าเล็กน้อย`);
-                    let d = null;
-                    for (let t = 0; t < 8 && !d; t++) { d = await getDescriptor(videoRef.current); if (!d) await sleep(300); }
-                    if (!d) { setMsg('ไม่พบใบหน้า กรุณามองกล้องให้ชัดแล้วลองใหม่'); setBusy(false); return; }
-                    samples.push(Array.from(d).map(x => +x.toFixed(4)));
-                    await sleep(500);
-                }
-                onSaved({ samples, pinHash: await hashPin(pin) });
-            };
-            return (
-                <div className="space-y-3">
-                    <video ref={videoRef} muted playsInline className="w-full rounded-xl bg-black aspect-[4/3] object-cover" style={{ transform: 'scaleX(-1)' }} />
-                    {camError && <p className="text-sm text-red-500 text-center">{camError}</p>}
-                    <p className="text-sm text-center text-gray-600">{msg}</p>
-                    <div>
-                        <label className="block text-xs font-semibold text-gray-600 mb-1">ตั้ง PIN สำรอง 4-6 หลัก ({user.name})</label>
-                        <input type="password" inputMode="numeric" maxLength={6} value={pin} onChange={e => setPin(e.target.value.replace(/\D/g, ''))} className="w-full p-3 border rounded-xl text-sm tracking-widest" />
-                    </div>
-                    <p className="text-[11px] text-gray-400">ระบบเก็บเฉพาะข้อมูลตัวเลขลักษณะใบหน้าไว้ในเครื่องนี้ ไม่เก็บรูปภาพ และควรได้รับความยินยอมจากผู้ลงทะเบียน</p>
-                    <div className="flex gap-3">
-                        {onCancel && <button onClick={onCancel} className="flex-1 border border-gray-300 text-gray-600 font-bold py-3 rounded-xl hover:bg-gray-50">ยกเลิก</button>}
-                        <button disabled={!ready || busy} onClick={capture} className="flex-1 bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700 disabled:opacity-50"><i className="fas fa-camera mr-2"></i>บันทึกใบหน้า</button>
-                    </div>
-                </div>
-            );
-        };
-
-        // หน้าต่างจัดการใบหน้า (เฉพาะเจ้าของ): ลงทะเบียน/ถ่ายใหม่/ลบ ผู้จัดการ
-        const FaceManager = ({ onClose }) => {
-            const [faces, setFaces] = useState(loadFaces());
-            const [enrolling, setEnrolling] = useState(null);
-            const update = (next) => { saveFaces(next); setFaces(next); };
-            return (
-                <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-                    <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4 max-h-[90vh] overflow-y-auto">
-                        {enrolling ? (
-                            <>
-                                <h3 className="text-lg font-bold text-gray-800">ลงทะเบียนใบหน้า: {enrolling.name}</h3>
-                                <FaceEnroll user={enrolling} onCancel={() => setEnrolling(null)} onSaved={(rec) => { update({ ...faces, [enrolling.id]: rec }); setEnrolling(null); }} />
-                            </>
-                        ) : (
-                            <>
-                                <h3 className="text-lg font-bold text-gray-800"><i className="fas fa-user-shield text-blue-600 mr-2"></i>จัดการใบหน้า / PIN</h3>
-                                {FACE_USERS.map(u => (
-                                    <div key={u.id} className="flex items-center justify-between border rounded-xl p-3">
-                                        <div>
-                                            <p className="font-bold text-gray-800">{u.name}</p>
-                                            <p className={`text-xs ${faces[u.id] ? 'text-green-600' : 'text-gray-400'}`}>{faces[u.id] ? 'ลงทะเบียนแล้ว' : 'ยังไม่ได้ลงทะเบียน'}</p>
-                                        </div>
-                                        <div className="flex gap-2">
-                                            <button onClick={() => setEnrolling(u)} className="px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg text-sm font-bold hover:bg-blue-100">{faces[u.id] ? 'ถ่ายใหม่ / เปลี่ยน PIN' : 'ลงทะเบียน'}</button>
-                                            {u.id !== 'owner' && faces[u.id] && <button onClick={() => { const { [u.id]: _removed, ...rest } = faces; update(rest); }} className="px-3 py-1.5 bg-red-50 text-red-500 rounded-lg text-sm font-bold hover:bg-red-100">ลบ</button>}
-                                        </div>
-                                    </div>
-                                ))}
-                                <button onClick={onClose} className="w-full border border-gray-300 text-gray-600 font-bold py-2.5 rounded-xl hover:bg-gray-50">ปิด</button>
-                            </>
-                        )}
-                    </div>
-                </div>
-            );
-        };
-
         const LoginView = ({ onLogin }) => {
-            const [faces] = useState(loadFaces());
-            const [mode, setMode] = useState(faces.owner ? 'scan' : 'setup');
-            const [msg, setMsg] = useState('กำลังโหลดระบบสแกนใบหน้า...');
-            const [pinUser, setPinUser] = useState('owner');
-            const [pin, setPin] = useState('');
-            const videoRef = useRef(null);
-            const camError = useCamera(videoRef, mode === 'scan');
+            const [username, setUsername] = useState('');
+            const [password, setPassword] = useState('');
+            const [error, setError] = useState('');
 
-            useEffect(() => {
-                if (mode !== 'scan') return;
-                let stop = false, streak = 0, last = '';
-                (async () => {
-                    try { await loadFaceModels(); } catch (e) { setMsg('โหลดระบบสแกนไม่ได้ กรุณาใช้ PIN สำรอง'); return; }
-                    setMsg('มองตรงที่กล้องเพื่อเข้าสู่ระบบ');
-                    while (!stop) {
-                        const v = videoRef.current;
-                        if (v && v.readyState >= 2) {
-                            const d = await getDescriptor(v);
-                            let best = null;
-                            if (d) for (const u of FACE_USERS) {
-                                const rec = faces[u.id];
-                                if (!rec) continue;
-                                const dist = Math.min(...rec.samples.map(sm => faceDist(d, sm)));
-                                if (dist < FACE_MATCH_DIST && (!best || dist < best.dist)) best = { u, dist };
-                            }
-                            if (best && best.u.id === last) streak++; else { streak = best ? 1 : 0; last = best ? best.u.id : ''; }
-                            if (streak >= 3 && !stop) { stop = true; onLogin(best.u.role, best.u.name); return; }
-                            setMsg(!d ? 'ไม่พบใบหน้า กรุณามองกล้อง' : best ? `กำลังยืนยันตัวตน...` : 'ไม่รู้จักใบหน้านี้');
-                        }
-                        await sleep(400);
-                    }
-                })();
-                return () => { stop = true; };
-            }, [mode]);
-
-            const submitPin = async (e) => {
+            const handleSubmit = (e) => {
                 e.preventDefault();
-                const u = FACE_USERS.find(x => x.id === pinUser);
-                const rec = faces[pinUser];
-                if (rec && rec.pinHash === await hashPin(pin)) onLogin(u.role, u.name);
-                else { setMsg('PIN ไม่ถูกต้อง'); setPin(''); }
+                if (username.trim().toLowerCase() === 'admin' && password === 'Nf190448') {
+                    onLogin('admin', 'Admin');
+                } else {
+                    setError('ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง');
+                    setPassword('');
+                }
             };
 
             return (
@@ -310,35 +186,18 @@
                             <img src={LOGO_SRC} alt="GP Mobile shop" className="w-16 h-16 rounded-2xl mx-auto mb-4 shadow-md" />
                             <h1 className="text-2xl font-bold text-gray-800">เข้าสู่ระบบ GP Mobile shop</h1>
                         </div>
-
-                        {mode === 'setup' && (
-                            <div className="space-y-3">
-                                <p className="text-sm text-gray-600 text-center">ตั้งค่าครั้งแรก: ลงทะเบียนใบหน้า<b>เจ้าของ</b><br/>(ผู้จัดการลงทะเบียนได้ภายหลัง จากเมนู "จัดการใบหน้า / PIN")</p>
-                                <FaceEnroll user={FACE_USERS[0]} onSaved={(rec) => { saveFaces({ owner: rec }); onLogin('admin', 'เจ้าของ'); }} />
+                        <form onSubmit={handleSubmit} className="space-y-4">
+                            {error && <div className="bg-red-50 text-red-500 p-3 rounded-xl text-sm font-medium text-center border border-red-200">{error}</div>}
+                            <div>
+                                <label className="text-xs text-gray-500">ชื่อผู้ใช้ (Username)</label>
+                                <input autoFocus value={username} onChange={e => setUsername(e.target.value)} className="w-full p-3 border rounded-xl text-sm" placeholder="Admin" />
                             </div>
-                        )}
-
-                        {mode === 'scan' && (
-                            <div className="space-y-3">
-                                <video ref={videoRef} muted playsInline className="w-full rounded-xl bg-black aspect-[4/3] object-cover" style={{ transform: 'scaleX(-1)' }} />
-                                <p className="text-sm text-center text-gray-600">{camError || msg}</p>
-                                <button onClick={() => { setMsg(''); setMode('pin'); }} className="w-full border border-gray-300 text-gray-600 font-bold py-2.5 rounded-xl hover:bg-gray-50"><i className="fas fa-key mr-2"></i>ใช้ PIN สำรอง</button>
+                            <div>
+                                <label className="text-xs text-gray-500">รหัสผ่าน (Password)</label>
+                                <input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full p-3 border rounded-xl text-sm" placeholder="••••••••" />
                             </div>
-                        )}
-
-                        {mode === 'pin' && (
-                            <form onSubmit={submitPin} className="space-y-4">
-                                {msg && <div className="bg-red-50 text-red-500 p-3 rounded-xl text-sm font-medium text-center border border-red-200">{msg}</div>}
-                                <div className="flex gap-2">
-                                    {FACE_USERS.filter(u => faces[u.id]).map(u => (
-                                        <button type="button" key={u.id} onClick={() => setPinUser(u.id)} className={`flex-1 py-2 rounded-xl text-sm font-bold border ${pinUser === u.id ? 'bg-blue-600 text-white border-blue-600' : 'text-gray-600 border-gray-300'}`}>{u.name}</button>
-                                    ))}
-                                </div>
-                                <input type="password" inputMode="numeric" maxLength={6} autoFocus value={pin} onChange={e => setPin(e.target.value.replace(/\D/g, ''))} placeholder="กรอก PIN" className="w-full p-3 border rounded-xl text-sm tracking-widest text-center focus:outline-blue-500" />
-                                <button type="submit" className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700 transition shadow-lg"><i className="fas fa-sign-in-alt mr-2"></i>เข้าสู่ระบบ</button>
-                                <button type="button" onClick={() => { setMsg(''); setMode('scan'); }} className="w-full text-sm text-gray-500 hover:text-blue-600">กลับไปสแกนใบหน้า</button>
-                            </form>
-                        )}
+                            <button type="submit" className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700 transition shadow-lg"><i className="fas fa-sign-in-alt mr-2"></i>เข้าสู่ระบบ</button>
+                        </form>
                     </div>
                 </div>
             );
@@ -631,7 +490,9 @@
                 battery: '',
                 capacity: '',
                 color: '',
-                imageUrl: ''
+                imageUrl: '',
+                brand: '',
+                model: ''
             });
 
             const isPhoneCategory = formData.category === 'เครื่องใหม่' || formData.category === 'เครื่องมือ2';
@@ -689,7 +550,7 @@
                 addTransaction('รายจ่าย', `ซื้อสินค้าเข้าสต็อก: ${newItem.name}`, cost * qty, qty, newItem.id);
                 setFormData({ 
                     sku: '', name: '', category: 'อะไหล่', cost: '', price: '', qty: '', 
-                    battery: '', capacity: '', color: '', imageUrl: '' 
+                    battery: '', capacity: '', color: '', imageUrl: '', brand: '', model: '' 
                 });
                 showToast(`เพิ่ม ${newItem.name} ลงสต็อกแล้ว`);
             };
@@ -708,10 +569,17 @@
                         <form onSubmit={handleSubmit} className="space-y-4">
                             <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
                                 <div><label className="text-xs text-gray-500">รหัส SKU</label><input required value={formData.sku} onChange={e => setFormData({...formData, sku: e.target.value})} className="w-full border p-2.5 rounded-xl text-sm" placeholder="SKU-001" /></div>
-                                <div><label className="text-xs text-gray-500">ชื่อสินค้า</label><input required value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="w-full border p-2.5 rounded-xl text-sm" placeholder="เช่น iPhone 13" /></div>
+                                {isPhoneCategory ? (
+                                    <BrandModelPicker brand={formData.brand} model={formData.model} onChange={({ brand, model, resolved }) => setFormData({ ...formData, brand, model, name: resolved })} />
+                                ) : (
+                                    <div><label className="text-xs text-gray-500">ชื่อสินค้า</label><input required value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="w-full border p-2.5 rounded-xl text-sm" placeholder="เช่น หน้าจอ iPhone 13" /></div>
+                                )}
+                                {isPhoneCategory && needsCustomName(formData.brand, formData.model) && (
+                                    <div><label className="text-xs text-gray-500">ชื่อ/รุ่นเครื่อง (พิมพ์เอง)</label><input required value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="w-full border p-2.5 rounded-xl text-sm" placeholder="เช่น iPhone 13" /></div>
+                                )}
                                 <div>
                                     <label className="text-xs text-gray-500">หมวดหมู่</label>
-                                    <select value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})} className="w-full border p-2.5 rounded-xl text-sm">
+                                    <select value={formData.category} onChange={e => setFormData({...formData, category: e.target.value, name: '', brand: '', model: ''})} className="w-full border p-2.5 rounded-xl text-sm">
                                         <option value="อะไหล่">อะไหล่</option>
                                         <option value="อุปกรณ์เสริม">อุปกรณ์เสริม</option>
                                         <option value="เครื่องใหม่">เครื่องใหม่</option>
@@ -965,7 +833,7 @@
 
         // --- 3.4 รับจำนำ (Pawn) ---
         const PawnTab = ({ pawns, setPawns, showToast, addTransaction }) => {
-            const [formData, setFormData] = useState({ name: '', phone: '', idCard: '', model: '', imei: '', principal: '', startDate: '', dueDate: '' });
+            const [formData, setFormData] = useState({ name: '', phone: '', idCard: '', model: '', imei: '', principal: '', startDate: '', dueDate: '', brand: '', modelSel: '' });
 
             const syncToCalendar = async (pawnData) => {
                 showToast("กำลังซิงค์กับปฏิทิน...");
@@ -1001,7 +869,7 @@
                 addTransaction('รายจ่าย', `ปล่อยเงินรับจำนำ: ${newPawn.model}`, principal, 1, newPawn.id);
                 syncToCalendar(newPawn);
 
-                setFormData({ name: '', phone: '', idCard: '', model: '', imei: '', principal: '', startDate: '', dueDate: '' });
+                setFormData({ name: '', phone: '', idCard: '', model: '', imei: '', principal: '', startDate: '', dueDate: '', brand: '', modelSel: '' });
                 showToast(`รับจำนำสำเร็จ (ดอกเบี้ย 10%)`);
             };
 
@@ -1074,7 +942,10 @@
                             <div><label className="text-xs text-gray-500">ชื่อลูกค้าผู้จำนำ</label><input required value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="w-full border p-2.5 rounded-xl text-sm" placeholder="นายสมชาย ใจดี" /></div>
                             <div><label className="text-xs text-gray-500">เบอร์โทรศัพท์</label><input required value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} className="w-full border p-2.5 rounded-xl text-sm" placeholder="0812345678" /></div>
                             <div><label className="text-xs text-gray-500">เลขบัตรประชาชน</label><input required value={formData.idCard} onChange={e => setFormData({...formData, idCard: e.target.value})} className="w-full border p-2.5 rounded-xl text-sm" placeholder="1-xxxx-xxxxx-xx-x" /></div>
-                            <div><label className="text-xs text-gray-500">ชื่อรุ่นเครื่อง / สเปค</label><input required value={formData.model} onChange={e => setFormData({...formData, model: e.target.value})} className="w-full border p-2.5 rounded-xl text-sm" placeholder="iPhone 14 Pro 128GB" /></div>
+                            <BrandModelPicker brand={formData.brand} model={formData.modelSel} onChange={({ brand, model, resolved }) => setFormData({ ...formData, brand, modelSel: model, model: resolved })} />
+                            {needsCustomName(formData.brand, formData.modelSel) && (
+                                <div><label className="text-xs text-gray-500">ชื่อ/รุ่นเครื่อง (พิมพ์เอง)</label><input required value={formData.model} onChange={e => setFormData({...formData, model: e.target.value})} className="w-full border p-2.5 rounded-xl text-sm" placeholder="เช่น iPhone 14 Pro 128GB" /></div>
+                            )}
                             <div><label className="text-xs text-gray-500">หมายเลข IMEI / Serial</label><input required value={formData.imei} onChange={e => setFormData({...formData, imei: e.target.value})} className="w-full border p-2.5 rounded-xl text-sm" placeholder="35xxxxxxxxxxxxx" /></div>
                             <div><label className="text-xs text-gray-500">ยอดเงินจำนำ (฿)</label><input required type="number" value={formData.principal} onChange={e => setFormData({...formData, principal: e.target.value})} className="w-full border p-2.5 rounded-xl text-sm" placeholder="10000" /></div>
                             <div><label className="text-xs text-gray-500">วันที่รับจำนำ</label><input required type="date" value={formData.startDate} onChange={e => setFormData({...formData, startDate: e.target.value})} className="w-full border p-2.5 rounded-xl text-sm" /></div>
@@ -1181,15 +1052,17 @@
         // --- 3.5 ลูกค้าสัมพันธ์ (CRM) ---
         const CRMTab = ({ repairs, pawns, onPrintRepair }) => {
             const [searchPhone, setSearchPhone] = useState('');
-            const customerRepairs = repairs.filter(r => searchPhone && r.phone.includes(searchPhone));
-            const customerPawns = pawns.filter(p => searchPhone && p.phone.includes(searchPhone));
+            const q = searchPhone.trim().toLowerCase();
+            const matchRecord = (rec) => q && [rec.phone, rec.id, rec.model, rec.imei].some(f => f && String(f).toLowerCase().includes(q));
+            const customerRepairs = repairs.filter(matchRecord);
+            const customerPawns = pawns.filter(matchRecord);
 
             return (
                 <div className="space-y-6 page-fade-in">
                     <h2 className="text-2xl font-bold text-gray-800">ค้นหาประวัติลูกค้า (CRM)</h2>
                     <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
                         <div className="relative max-w-md mb-6">
-                            <input type="text" placeholder="พิมพ์เบอร์โทรศัพท์..." value={searchPhone} onChange={e => setSearchPhone(e.target.value)} className="w-full pl-10 pr-4 py-3 border rounded-xl bg-gray-50 focus:bg-white transition" />
+                            <input type="text" placeholder="ค้นหาด้วย เบอร์โทร / รหัสเครื่อง / เลขเครื่อง (IMEI) / โมเดลเครื่อง..." value={searchPhone} onChange={e => setSearchPhone(e.target.value)} className="w-full pl-10 pr-4 py-3 border rounded-xl bg-gray-50 focus:bg-white transition" />
                             <i className="fas fa-search text-gray-400 absolute left-3 top-4"></i>
                         </div>
 
@@ -1259,9 +1132,11 @@
             // กรองตามประเภท Tab เพื่อแยกรายการจำนำออกจากขายหน้าร้าน/งานซ่อม
             const filteredRows = useMemo(() => {
                 if (ledgerTab === 'sales') {
-                    return monthRows.filter(r => !r.detail.includes('จำนำ') && !r.detail.includes('ไถ่เครื่อง'));
+                    return monthRows.filter(r => !r.detail.includes('จำนำ') && !r.detail.includes('ไถ่เครื่อง') && !r.detail.includes('ซื้อสินค้าเข้าสต็อก'));
                 } else if (ledgerTab === 'pawns') {
                     return monthRows.filter(r => r.detail.includes('จำนำ') || r.detail.includes('ไถ่เครื่อง'));
+                } else if (ledgerTab === 'stock') {
+                    return monthRows.filter(r => r.detail.includes('ซื้อสินค้าเข้าสต็อก'));
                 }
                 return monthRows;
             }, [monthRows, ledgerTab]);
@@ -1362,6 +1237,12 @@
                         >
                             <i className="fas fa-hand-holding-usd mr-1.5"></i>รายการรับจำนำ / ไถ่ถอน
                         </button>
+                        <button 
+                            onClick={() => setLedgerTab('stock')}
+                            className={`px-4 py-2 text-xs font-bold rounded-lg transition ${ledgerTab === 'stock' ? 'bg-white text-amber-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+                        >
+                            <i className="fas fa-boxes mr-1.5"></i>รายการสต็อกสินค้า
+                        </button>
                     </div>
 
                     {showAdd && (
@@ -1439,7 +1320,7 @@
                                     <tr className="bg-blue-50 text-sm font-extrabold">
                                         <td className="p-3.5 text-blue-800" colSpan={3}>รวมทั้งเดือน {TH_MONTHS[selectedMonth]} {selectedYear} — ขายได้ ฿{totalIncome.toLocaleString()}</td>
                                         <td className="p-3.5 text-right text-green-700">{totalIncome.toLocaleString()}</td>
-                                        <td className="p-3.5 text-right text-red-700">{totalExpense.toLocaleString()}</td>
+                                        <td className="p-3.5 text-right text-red-700"></td>
                                         <td className="p-3.5 text-right text-purple-700">{monthSalesProfit.toLocaleString()}</td>
                                         <td colSpan={2}></td>
                                     </tr>
@@ -1601,7 +1482,6 @@
             const [authState, setAuthState] = useState('login'); 
             const [userRole, setUserRole] = useState('');
             const [userName, setUserName] = useState('');
-            const [showFaceMgr, setShowFaceMgr] = useState(false);
             const [activeTab, setActiveTab] = useState('dashboard');
             const [sidebarOpen, setSidebarOpen] = useState(false);
             const [toastMessage, setToastMessage] = useState('');
@@ -1874,8 +1754,6 @@
 
                         {sidebarOpen && <div className="fixed inset-0 bg-black/50 z-20 md:hidden" onClick={() => setSidebarOpen(false)}></div>}
 
-                        {showFaceMgr && <FaceManager onClose={() => setShowFaceMgr(false)} />}
-
                         {/* Sidebar Navigation */}
                         <aside className={`fixed md:static inset-y-0 left-0 w-64 bg-slate-900 text-white flex flex-col shadow-xl z-30 shrink-0 transform transition-transform duration-300 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0`}>
                             <div className="h-16 flex items-center px-6 border-b border-slate-800 bg-slate-950">
@@ -1894,8 +1772,7 @@
                                     <div className="w-8 h-8 bg-slate-800 rounded-full flex items-center justify-center mr-3"><i className="fas fa-user"></i></div>
                                     <div><p className="font-bold capitalize text-white">{userName || userRole}</p><p className="text-xs opacity-70">ออนไลน์</p></div>
                                 </div>
-                                {userRole === 'admin' && <button onClick={() => setShowFaceMgr(true)} className="w-full flex items-center px-4 py-2.5 mb-1 text-slate-300 hover:bg-slate-800 rounded-xl transition text-sm font-medium"><i className="fas fa-user-shield mr-3"></i> จัดการใบหน้า / PIN</button>}
-                                <button onClick={() => {setAuthState('login'); setUserRole(''); setUserName(''); setShowFaceMgr(false);}} className="w-full flex items-center px-4 py-2.5 text-red-400 hover:bg-red-500/10 rounded-xl transition text-sm font-medium">
+                                <button onClick={() => {setAuthState('login'); setUserRole(''); setUserName('');}} className="w-full flex items-center px-4 py-2.5 text-red-400 hover:bg-red-500/10 rounded-xl transition text-sm font-medium">
                                     <i className="fas fa-sign-out-alt mr-3"></i> ออกจากระบบ
                                 </button>
                             </div>
