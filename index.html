@@ -80,16 +80,62 @@
         // ===== ตัวช่วยสมุดบัญชี =====
         const TH_MONTHS = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
 
-        // รายชื่อรุ่นเครื่องตามแบรนด์ (ใช้ร่วมกันทั้งหน้าสต็อกสินค้าและหน้ารับจำนำ) - เลือก "อื่นๆ" เพื่อพิมพ์รุ่นเองได้เสมอ
-        const PHONE_MODELS = {
-            'Apple': ['iPhone 11', 'iPhone 11 Pro', 'iPhone 11 Promax', 'iPhone 12', 'iPhone 12 Mini', 'iPhone 12 Pro', 'iPhone 12 Promax', 'iPhone 13', 'iPhone 13 Mini', 'iPhone 13 Pro', 'iPhone 13 Promax', 'iPhone 14', 'iPhone 14 Plus', 'iPhone 14 Pro', 'iPhone 14 Promax', 'iPhone 15', 'iPhone 15 Plus', 'iPhone 15 Pro', 'iPhone 15 Promax', 'iPhone 16', 'iPhone 16 Plus', 'iPhone 16 Pro', 'iPhone 16 Promax', 'iPhone 16e', 'iPhone 17', 'iPhone 17 Air', 'iPhone 17 Pro', 'iPhone 17 Promax', 'iPhone SE'],
-            'Samsung': ['Galaxy A05', 'Galaxy A05s', 'Galaxy A15', 'Galaxy A16', 'Galaxy A25', 'Galaxy A35', 'Galaxy A55', 'Galaxy S21', 'Galaxy S22', 'Galaxy S23', 'Galaxy S23 Ultra', 'Galaxy S24', 'Galaxy S24 Ultra', 'Galaxy S25', 'Galaxy S25 Ultra', 'Galaxy Note 20', 'Galaxy Note 20 Ultra', 'Galaxy Z Flip5', 'Galaxy Z Flip6', 'Galaxy Z Fold5', 'Galaxy Z Fold6'],
-            'OPPO': ['OPPO A3', 'OPPO A5', 'OPPO A5 Pro', 'OPPO A18', 'OPPO A38', 'OPPO A53', 'OPPO A58', 'OPPO A78', 'OPPO A98', 'OPPO Reno 11', 'OPPO Reno 12', 'OPPO Reno 13', 'OPPO Reno 15', 'OPPO Find X7', 'OPPO Find X8', 'OPPO Find X10'],
-            'Vivo': ['Vivo Y17s', 'Vivo Y18', 'Vivo Y28', 'Vivo Y36', 'Vivo Y100', 'Vivo V29', 'Vivo V30', 'Vivo V40', 'Vivo X90', 'Vivo X100', 'Vivo X200'],
-            'Xiaomi': ['Redmi 12', 'Redmi 13', 'Redmi Note 12', 'Redmi Note 13', 'Redmi Note 14', 'Poco X6', 'Poco F6', 'Xiaomi 13', 'Xiaomi 14', 'Xiaomi 15'],
-            'Realme': ['Realme C53', 'Realme C55', 'Realme C61', 'Realme 11', 'Realme 12', 'Realme 12 Pro', 'Realme 13 Pro', 'Realme Narzo 70'],
+        // รายชื่อรุ่นเครื่องตามแบรนด์ แยกกลุ่มตามซีรีส์ (ใช้ร่วมกันทั้งหน้าสต็อกสินค้าและหน้ารับจำนำ) - เลือก "อื่นๆ" เพื่อพิมพ์รุ่นเองได้เสมอ
+        // วิธีเพิ่มรุ่น: เติมชื่อรุ่นในวงเล็บ [ ... ] ของกลุ่มที่ต้องการ (ชื่อที่แสดง = คำนำหน้า + ชื่อรุ่น) / วิธีเพิ่มกลุ่ม: เพิ่ม mk('ชื่อกลุ่ม', 'คำนำหน้า ', [...])
+        const mk = (label, prefix, items) => ({ label, models: items.map(i => prefix + i) });
+        const PHONE_MODEL_GROUPS = {
+            'Apple': [
+                mk('iPhone', 'iPhone ', ['8 Plus', 'X', 'XR', 'XS', 'XS Max', '11', '11 Pro', '11 Pro Max', 'SE (รุ่นที่ 2)', '12 mini', '12', '12 Pro', '12 Pro Max', '13 mini', '13', '13 Pro', '13 Pro Max', 'SE (รุ่นที่ 3)', '14', '14 Plus', '14 Pro', '14 Pro Max', '15', '15 Plus', '15 Pro', '15 Pro Max', '16', '16 Plus', '16 Pro', '16 Pro Max', '16e', '17', '17 Air', '17 Pro', '17 Pro Max', '18', '18 Plus', '18 Pro', '18 Pro Max']),
+                mk('iPad (รุ่นมาตรฐาน)', '', ['iPad (รุ่นที่ 6) - 2018', 'iPad (รุ่นที่ 7) - 2019', 'iPad (รุ่นที่ 8) - 2020', 'iPad (รุ่นที่ 9) - 2021', 'iPad (รุ่นที่ 10) - 2022', 'iPad (รุ่นที่ 11) - 2025/2026']),
+                mk('iPad mini', '', ['iPad mini (รุ่นที่ 5) - 2019', 'iPad mini (รุ่นที่ 6) - 2021', 'iPad mini (รุ่นที่ 7 / A17 Pro) - 2024']),
+                mk('iPad Air', '', ['iPad Air (รุ่นที่ 3) - 2019', 'iPad Air (รุ่นที่ 4) - 2020', 'iPad Air (รุ่นที่ 5 / M1) - 2022', 'iPad Air 11 นิ้ว (M2) - 2024', 'iPad Air 13 นิ้ว (M2) - 2024']),
+                mk('iPad Pro 11 นิ้ว', 'iPad Pro 11 นิ้ว ', ['รุ่นที่ 1 (2018)', 'รุ่นที่ 2 (2020)', 'รุ่นที่ 3 M1 (2021)', 'รุ่นที่ 4 M2 (2022)', 'M4 (2024)']),
+                mk('iPad Pro 12.9 นิ้ว', 'iPad Pro 12.9 นิ้ว ', ['รุ่นที่ 3 (2018)', 'รุ่นที่ 4 (2020)', 'รุ่นที่ 5 M1 (2021)', 'รุ่นที่ 6 M2 (2022)']),
+                mk('iPad Pro 13 นิ้ว', 'iPad Pro 13 นิ้ว ', ['M4 (2024)']),
+            ],
+            'Samsung': [
+                mk('Galaxy S Series', 'Galaxy ', ['S6', 'S6 edge', 'S6 edge+', 'S7', 'S7 edge', 'S8', 'S8+', 'S9', 'S9+', 'S10e', 'S10', 'S10+', 'S20', 'S20+', 'S20 Ultra', 'S20 FE', 'S21', 'S21+', 'S21 Ultra', 'S21 FE', 'S22', 'S22+', 'S22 Ultra', 'S23', 'S23+', 'S23 Ultra', 'S23 FE', 'S24', 'S24+', 'S24 Ultra', 'S24 FE', 'S25', 'S25+', 'S25 Ultra', 'S25 FE', 'S26', 'S26+', 'S26 Ultra', 'S26 FE']),
+                mk('Galaxy Note Series', 'Galaxy ', ['Note 5', 'Note 7', 'Note FE', 'Note 8', 'Note 9', 'Note 10', 'Note 10+', 'Note 10 Lite', 'Note 20', 'Note 20 Ultra']),
+                mk('Galaxy Z (จอพับ)', 'Galaxy ', ['Fold', 'Z Flip', 'Z Fold2', 'Z Flip3', 'Z Fold3', 'Z Flip4', 'Z Fold4', 'Z Flip5', 'Z Fold5', 'Z Flip6', 'Z Fold6', 'Z Flip7', 'Z Fold7', 'Z Flip8', 'Z Fold8']),
+                mk('Galaxy A Series', 'Galaxy ', ['A5', 'A7', 'A8', 'A8+', 'A9 Pro', 'A10', 'A20', 'A30', 'A50', 'A70', 'A80', 'A11', 'A21s', 'A31', 'A51', 'A71', 'A12', 'A22', 'A32', 'A42', 'A52', 'A52s', 'A72', 'A13', 'A23', 'A33', 'A53', 'A73', 'A14', 'A24', 'A34', 'A54', 'A05', 'A05s', 'A15', 'A25', 'A35', 'A55', 'A06', 'A16', 'A26', 'A36', 'A56', 'A07', 'A17', 'A27', 'A37', 'A57']),
+                mk('Galaxy M Series', 'Galaxy ', ['M10', 'M20', 'M30', 'M11', 'M21', 'M31', 'M51', 'M12', 'M22', 'M32', 'M52', 'M13', 'M23', 'M33', 'M53', 'M14', 'M34', 'M54', 'M15', 'M35', 'M55', 'M16', 'M36', 'M56', 'M17']),
+            ],
+            'OPPO': [
+                mk('Find Series', 'OPPO ', ['Find X', 'Find X2', 'Find X2 Pro', 'Find X3 Pro 5G', 'Find X5 Pro 5G', 'Find N2 Flip', 'Find N3', 'Find N3 Flip', 'Find X7 Series', 'Find X8 Series', 'Find X9 Series', 'Find N5 Series', 'Find X10', 'Find X10 Pro Max', 'Find N6']),
+                mk('Reno Series', 'OPPO ', ['Reno', 'Reno 10x Zoom', 'Reno2', 'Reno2 F', 'Reno3 Pro', 'Reno4 Series', 'Reno5 Series', 'Reno6 Z 5G', 'Reno6 5G', 'Reno6 Pro 5G', 'Reno7 Series', 'Reno8 Series', 'Reno10 Series', 'Reno11 Series', 'Reno12 Series', 'Reno13', 'Reno14', 'Reno15 Series', 'Reno16 Series 5G', 'Reno16 F']),
+                mk('R Series', 'OPPO ', ['R7', 'R7s', 'R7 Plus', 'R7 Lite', 'R9s', 'R9s Plus', 'R15 Pro', 'R17 Pro']),
+                mk('F Series', 'OPPO ', ['F1', 'F1 Plus', 'F1s', 'F3', 'F5', 'F5 Youth', 'F7', 'F9', 'F11', 'F11 Pro']),
+                mk('A Series', 'OPPO ', ['A33', 'A37', 'A39', 'A57', 'A71', 'A77', 'A83', 'A3s', 'A5', 'A9', 'A18', 'A38', 'A53', 'A54', 'A58', 'A74', 'A78', 'A96', 'A98', 'A3', 'A5 Pro', 'A60', 'A7 Pro 5G', 'A7 Pro Max 5G', 'A6c']),
+            ],
+            'Vivo': [
+                mk('X Series (เรือธง / จอพับ)', 'Vivo ', ['X5', 'X5 Max', 'X5 Pro', 'X50', 'X50 Pro', 'X60 Pro', 'X70', 'X70 Pro', 'X70 Pro+', 'X80', 'X80 Pro', 'X Fold', 'X90', 'X90 Pro', 'X Fold2', 'X100', 'X100 Pro', 'X Fold3', 'X200', 'X200 Pro', 'X200 FE', 'X Fold4', 'X300', 'X300 Pro', 'X300 Ultra', 'X300 FE', 'X Fold5']),
+                mk('V Series', 'Vivo ', ['V3', 'V3 Max', 'V5', 'V5s', 'V7', 'V7+', 'V9', 'V11', 'V11i', 'V15', 'V15 Pro', 'V17', 'V17 Pro', 'V19', 'V20', 'V20 Pro', 'V20 SE', 'V21 5G', 'V23e', 'V23 5G', 'V25', 'V25 Pro', 'V27 5G', 'V29', 'V29 5G', 'V30', 'V30 Pro', 'V40', 'V40 Pro', 'V50', 'V60', 'V60 Lite 5G', 'V70', 'V70 FE', 'V80', 'V80 Lite 5G']),
+                mk('Y Series', 'Vivo ', ['Y31', 'Y51', 'Y53', 'Y55', 'Y71', 'Y81', 'Y91', 'Y11', 'Y12', 'Y15', 'Y17', 'Y19', 'Y20', 'Y30', 'Y50', 'Y21', 'Y33s', 'Y52', 'Y72', 'Y76', 'Y02', 'Y16', 'Y22', 'Y35', 'Y36', 'Y27', 'Y03', 'Y04s', 'Y05', 'Y11d', 'Y17s', 'Y18', 'Y19s', 'Y21d', 'Y28', 'Y29', 'Y39 5G', 'Y100', 'Y100 5G']),
+                mk('iQOO (เกมมิ่ง)', 'iQOO ', ['11', '12', '13', '15 Series', 'Z7', 'Z9', 'Z10', 'Z11 Series', 'Neo 8', 'Neo 9', 'Neo 10 Series']),
+            ],
+            'Xiaomi': [
+                mk('Xiaomi / Mi Series (เรือธง)', '', ['Mi 4', 'Mi 5', 'Mi 5s', 'Mi 5s Plus', 'Mi 6', 'Mi 8', 'Mi 8 Lite', 'Mi 8 Pro', 'Mi 9', 'Mi 9 SE', 'Mi 9 Lite', 'Mi 9T', 'Mi 9T Pro', 'Mi 10', 'Mi 10 Pro', 'Mi 10T', 'Mi 10T Pro', 'Mi 10T Lite', 'Mi 11', 'Mi 11 Lite', 'Mi 11 Ultra', 'Xiaomi 11T', 'Xiaomi 11T Pro', 'Xiaomi 12', 'Xiaomi 12 Pro', 'Xiaomi 12 Lite', 'Xiaomi 12T', 'Xiaomi 12T Pro', 'Xiaomi 13', 'Xiaomi 13 Pro', 'Xiaomi 13 Ultra', 'Xiaomi 13T', 'Xiaomi 13T Pro', 'Xiaomi 14', 'Xiaomi 14 Ultra', 'Xiaomi 14T', 'Xiaomi 14T Pro', 'Xiaomi 15', 'Xiaomi 15 Pro', 'Xiaomi 15 Ultra', 'Xiaomi 15T', 'Xiaomi 15T Pro', 'Xiaomi 17 Series', 'Xiaomi 17 Pro', 'Xiaomi 17 Ultra']),
+                mk('Redmi Note Series', 'Redmi ', ['Note 2', 'Note 3', 'Note 4', 'Note 4X', 'Note 5', 'Note 6 Pro', 'Note 7', 'Note 8', 'Note 8 Pro', 'Note 9', 'Note 9S', 'Note 9 Pro', 'Note 10', 'Note 10S', 'Note 10 Pro', 'Note 10 5G', 'Note 11', 'Note 11 Pro', 'Note 11 Pro 5G', 'Note 12 4G', 'Note 12 5G', 'Note 12 Pro', 'Note 12 Pro+', 'Note 13', 'Note 13 Pro', 'Note 13 Pro+', 'Note 14', 'Note 14 Pro', 'Note 14 Pro+', 'Note 15', 'Note 15 Pro', 'Note 15 Pro+']),
+                mk('Redmi Series', 'Redmi ', ['2', '3', '3S', '4A', '4X', '5', '5A', '6', '6A', '7', '7A', '8', '8A', '9', '9A', '9C', '9T', '10', '10A', '10C', '12', '13', 'A1', 'A2', 'A3', 'A5', 'A7 Pro']),
+                mk('POCO', 'POCO ', ['F1', 'F2 Pro', 'X3 NFC', 'M3', 'F3', 'X3 Pro', 'X3 GT', 'M3 Pro 5G', 'F4', 'F4 GT', 'X4 Pro 5G', 'M4 Pro', 'F5', 'X5', 'X5 Pro', 'M5', 'X6', 'X6 Pro', 'F6', 'F6 Pro', 'M6', 'M6 Pro', 'X7', 'X7 Pro']),
+            ],
+            'Realme': [
+                mk('GT Series', 'Realme ', ['GT 5G', 'GT Neo2 5G', 'GT Master Edition', 'GT2 Pro', 'GT Neo3', 'GT3', 'GT 6', 'GT 6T', 'GT 7', 'GT 7 Pro', 'GT 8', 'GT 8 Pro']),
+                mk('Number Series', 'Realme ', ['2 Pro', '3', '3 Pro', '5', '5 Pro', '5s', '6', '6i', '6 Pro', '7', '7i', '7 Pro', '8', '8 5G', '8 Pro', '9i', '9', '9 Pro', '9 Pro+', '10 Pro', '10 Pro+', '11x', '11', '11 Pro', '11 Pro+', '12', '12+', '12 Pro', '12 Pro+', '13', '13+', '13 Pro', '13 Pro+', '14 Series', '15 Series', '16 Series', '16 Pro', '16 Pro+']),
+                mk('C Series', 'Realme ', ['C1', 'C2', 'C3', 'C11', 'C12', 'C15', 'C17', 'C21', 'C21Y', 'C25', 'C25s', 'C31', 'C33', 'C35', 'C51', 'C53', 'C55', 'C61', 'C63', 'C65', 'C67', 'C71', 'C73', 'C75', 'C80', 'C90']),
+                mk('Note Series', 'Realme ', ['Note 50', 'Note 60', 'Note 70']),
+                mk('Narzo Series', 'Realme ', ['Narzo 70']),
+            ],
+            'Infinix': [
+                mk('ZERO Series (เรือธง)', 'Infinix ', ['ZERO 5', 'ZERO 8', 'ZERO 8i', 'ZERO X Pro', 'ZERO 20', 'ZERO Ultra', 'ZERO 30 4G', 'ZERO 30 5G', 'ZERO 40 4G', 'ZERO 40 5G', 'ZERO 50', 'ZERO 50 Pro', 'ZERO 60', 'ZERO 60 Pro']),
+                mk('GT Series (เกมมิ่ง)', 'Infinix ', ['GT 10 Pro', 'GT 20 Pro 5G', 'GT 30 Pro 5G', 'GT 40 Pro 5G']),
+                mk('NOTE Series', 'Infinix ', ['NOTE 7', 'NOTE 8', 'NOTE 10', 'NOTE 10 Pro', 'NOTE 12 G88', 'NOTE 12 G96', 'NOTE 12 Pro', 'NOTE 12 Pro 5G', 'NOTE 12 VIP', 'NOTE 30', 'NOTE 30 5G', 'NOTE 30 VIP', 'NOTE 40', 'NOTE 40 Pro', 'NOTE 40 Pro+ 5G', 'NOTE 40X 5G', 'NOTE 50 Series', 'NOTE 50 Pro 5G', 'NOTE 60 Series', 'NOTE 60', 'NOTE 60 Pro']),
+                mk('HOT Series', 'Infinix ', ['HOT 8', 'HOT 9', 'HOT 9 Play', 'HOT 10', 'HOT 10 Play', 'HOT 11', 'HOT 11 Play', 'HOT 11S', 'HOT 12', 'HOT 12 Play', 'HOT 20 5G', 'HOT 20S', 'HOT 30', 'HOT 30i', 'HOT 30 5G', 'HOT 40i', 'HOT 40', 'HOT 40 Pro', 'HOT 50', 'HOT 50i', 'HOT 50 Pro', 'HOT 60', 'HOT 60i', 'HOT 60 Pro']),
+            ],
         };
-        const PHONE_BRANDS = Object.keys(PHONE_MODELS);
+        // รายการแบบแบน (ไม่แยกกลุ่ม) - เผื่อส่วนอื่นของระบบเรียกใช้
+        const PHONE_MODELS = Object.fromEntries(Object.entries(PHONE_MODEL_GROUPS).map(([b, gs]) => [b, gs.flatMap(g => g.models)]));
+        const PHONE_BRANDS = Object.keys(PHONE_MODEL_GROUPS);
 
         // ตัวเลือก แบรนด์ + รุ่น แบบใช้ร่วมกัน (สต็อกสินค้า / รับจำนำ)
         // onChange จะได้ {brand, model, resolved} - resolved คือชื่อสินค้าสุดท้าย (ว่างถ้ายังต้องพิมพ์เอง)
@@ -110,7 +156,11 @@
                             <label className="text-xs text-gray-500">รุ่น</label>
                             <select value={model} onChange={e => onChange({ brand, model: e.target.value, resolved: e.target.value === '__other__' ? '' : e.target.value })} className="w-full border p-2.5 rounded-xl text-sm bg-white">
                                 <option value="">-- เลือกรุ่น --</option>
-                                {PHONE_MODELS[brand].map(m => <option key={m} value={m}>{m}</option>)}
+                                {PHONE_MODEL_GROUPS[brand].map(g => (
+                                    <optgroup key={g.label} label={g.label}>
+                                        {g.models.map(m => <option key={m} value={m}>{m}</option>)}
+                                    </optgroup>
+                                ))}
                                 <option value="__other__">อื่นๆ (พิมพ์เอง)</option>
                             </select>
                         </div>
@@ -845,7 +895,7 @@
         };
 
         // --- 3.4 รับจำนำ (Pawn) ---
-        const PawnTab = ({ pawns, setPawns, showToast, addTransaction }) => {
+        const PawnTab = ({ pawns, setPawns, setTransactions, showToast, addTransaction }) => {
             const [formData, setFormData] = useState({ name: '', phone: '', idCard: '', model: '', imei: '', principal: '', startDate: '', dueDate: '', brand: '', modelSel: '' });
 
             const syncToCalendar = async (pawnData) => {
@@ -942,6 +992,45 @@
                 syncToCalendar({ ...p, status: newStatus });
             };
 
+            // --- แก้ไขข้อมูลรายการจำนำ (ชื่อ / เบอร์ / บัตร / รุ่น / IMEI / ยอดจำนำ / วันที่) ---
+            const [editTarget, setEditTarget] = useState(null);
+            const [editForm, setEditForm] = useState({});
+            const openEdit = (p) => {
+                setEditTarget(p);
+                setEditForm({
+                    name: p.name || '', phone: p.phone || '', idCard: p.idCard || '',
+                    brand: p.brand || '', modelSel: p.modelSel || '', model: p.model || '',
+                    imei: p.imei || '', principal: String(p.principal ?? ''),
+                    startDate: p.startDate || '', dueDate: p.dueDate || ''
+                });
+            };
+            const saveEdit = (e) => {
+                e.preventDefault();
+                const p = editTarget;
+                const principal = parseFloat(editForm.principal);
+                if (!editForm.name.trim()) { showToast('กรุณากรอกชื่อลูกค้า'); return; }
+                if (!editForm.model.trim()) { showToast('กรุณาระบุรุ่นเครื่อง'); return; }
+                if (isNaN(principal) || principal <= 0) { showToast('ยอดเงินจำนำไม่ถูกต้อง'); return; }
+                const updated = {
+                    ...p,
+                    name: editForm.name.trim(), phone: editForm.phone.trim(), idCard: editForm.idCard.trim(),
+                    brand: editForm.brand, modelSel: editForm.modelSel, model: editForm.model.trim(),
+                    imei: editForm.imei.trim(), principal, interest: principal * 0.10,
+                    startDate: editForm.startDate, dueDate: editForm.dueDate
+                };
+                setPawns(pawns.map(x => x.id === p.id ? updated : x));
+                // ถ้าแก้ยอดจำนำ/รุ่น ให้แก้รายการ "ปล่อยเงินรับจำนำ" ในสมุดบัญชีให้ตรงกัน
+                if (principal !== p.principal || updated.model !== p.model) {
+                    setTransactions(prev => prev.map(t => (t.ref === p.id && typeof t.detail === 'string' && t.detail.startsWith('ปล่อยเงินรับจำนำ'))
+                        ? { ...t, detail: `ปล่อยเงินรับจำนำ: ${updated.model}`, amount: principal } : t));
+                }
+                if (ACTIVE_STATUS.includes(p.status) && updated.dueDate && (updated.dueDate !== p.dueDate || updated.model !== p.model || updated.name !== p.name)) {
+                    syncToCalendar(updated);
+                }
+                setEditTarget(null);
+                showToast(`แก้ไขรายการ ${p.id} เรียบร้อย`);
+            };
+
             return (
                 <div className="space-y-6 page-fade-in">
                     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -967,6 +1056,10 @@
                         </form>
                     </div>
 
+                    <div className="flex flex-wrap items-center gap-4 text-xs text-gray-600 px-1">
+                        <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded bg-yellow-300"></span>แถวสีเหลือง = เกินกำหนดจำนำ</span>
+                        <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded bg-red-500"></span>แถวสีแดง = หลุดจำนำ / หยุดจำนำ</span>
+                    </div>
                     {/* ตารางแสดงข้อมูลจำนำครบถ้วนทุกรายละเอียด */}
                     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
                         <div className="overflow-x-auto">
@@ -986,12 +1079,15 @@
                             <tbody>
                                 {pawns.length === 0 ? <tr><td colSpan={8} className="p-8 text-center text-gray-400">ยังไม่มีรายการรับจำนำ</td></tr> : pawns.map(p => {
                                     const today = new Date(); today.setHours(0,0,0,0);
-                                    const isOverdue = new Date(p.dueDate) < today;
-                                    const displayStatus = (p.status === 'อยู่ในระหว่างจำนำ' && isOverdue) ? 'อยู่ในระหว่างหลุดจำนำ' : p.status;
+                                    const todayStr = dayKey(new Date());
+                                    const isOverdue = ACTIVE_STATUS.includes(p.status) && ((p.dueDate && p.dueDate < todayStr) || p.status === 'อยู่ในระหว่างหลุดจำนำ');
+                                    const isForfeit = p.status === 'หลุดจำนำ';
+                                    const overdueDays = (isOverdue && p.dueDate) ? Math.max(0, Math.round((new Date(todayStr) - new Date(p.dueDate)) / 86400000)) : 0;
+                                    const displayStatus = isOverdue ? ('เกินกำหนด' + (overdueDays > 0 ? ' ' + overdueDays + ' วัน' : '')) : p.status;
                                     
                                     return (
-                                    <tr key={p.id} className="hover:bg-gray-50 border-b text-sm transition">
-                                        <td className="p-4 font-mono font-bold text-purple-600 whitespace-nowrap">{p.id}</td>
+                                    <tr key={p.id} className={`border-b text-sm transition ${isForfeit ? 'bg-red-50 hover:bg-red-100' : isOverdue ? 'bg-yellow-50 hover:bg-yellow-100' : 'hover:bg-gray-50'}`}>
+                                        <td className={`p-4 font-mono font-bold text-purple-600 whitespace-nowrap border-l-4 ${isForfeit ? 'border-red-500' : isOverdue ? 'border-yellow-400' : 'border-transparent'}`}>{p.id}</td>
                                         <td className="p-4">
                                             <div className="font-bold text-gray-800">{p.name}</div>
                                             <div className="text-xs text-gray-500">โทร: {p.phone}</div>
@@ -1008,24 +1104,25 @@
                                         </td>
                                         <td className="p-4 text-center text-xs whitespace-nowrap">
                                             <div className="text-gray-500">เริ่ม: {p.startDate || '-'}</div>
-                                            <div className="text-red-500 font-bold mt-1">
+                                            <div className={`font-bold mt-1 ${isForfeit ? 'text-red-600' : isOverdue ? 'text-yellow-700' : 'text-gray-800'}`}>
                                                 {ACTIVE_STATUS.includes(p.status)
-                                                    ? <input key={p.id + p.dueDate} type="date" defaultValue={p.dueDate} title="เปลี่ยนวันครบกำหนด (ปฏิทินจะอัปเดตตาม)" onBlur={e => { if (e.target.value && e.target.value !== p.dueDate) handleExtendDueDate(p.id, e.target.value); }} className="border rounded p-1 text-xs text-red-600 font-bold bg-white" />
+                                                    ? <input key={p.id + p.dueDate} type="date" defaultValue={p.dueDate} title="เปลี่ยนวันครบกำหนด (ปฏิทินจะอัปเดตตาม)" onBlur={e => { if (e.target.value && e.target.value !== p.dueDate) handleExtendDueDate(p.id, e.target.value); }} className={`border rounded p-1 text-xs font-bold bg-white ${isOverdue ? 'text-yellow-700 border-yellow-400' : 'text-gray-800'}`} />
                                                     : p.dueDate}
                                             </div>
                                         </td>
                                         <td className="p-4 text-center whitespace-nowrap">
-                                            <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${displayStatus.includes('หลุด') ? 'bg-red-100 text-red-700' : displayStatus === 'อยู่ในระหว่างจำนำ' ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700'}`}>
+                                            <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${isForfeit ? 'bg-red-500 text-white' : isOverdue ? 'bg-yellow-200 text-yellow-800' : p.status === 'อยู่ในระหว่างจำนำ' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
                                                 {displayStatus}
                                             </span>
                                         </td>
                                         <td className="p-4 text-center whitespace-nowrap">
+                                            <button onClick={() => openEdit(p)} className="text-blue-600 hover:bg-blue-100 p-2 rounded-lg mr-1" title="แก้ไขรายการ"><i className="fas fa-edit"></i></button>
                                             <select className="border rounded-lg text-xs p-1.5 bg-white cursor-pointer font-medium" value={p.status} onChange={(e) => { if (e.target.value === '__renew') openRenew(p); else handleUpdateStatus(p.id, e.target.value); }}>
                                                 <option value="อยู่ในระหว่างจำนำ">อยู่ในระหว่างจำนำ</option>
                                                 {ACTIVE_STATUS.includes(p.status) && <option value="__renew">ต่อดอก (เลื่อนวันครบกำหนด)</option>}
                                                 <option value="ไถ่เครื่องออก">ไถ่เครื่องออก</option>
                                                 <option value="ออกก่อนกำหนด">ออกก่อนกำหนด</option>
-                                                <option value="หลุดจำนำ">หลุดจำนำ (ยึดเครื่อง)</option>
+                                                <option value="หลุดจำนำ">หลุดจำนำ / หยุดจำนำ (ยึดเครื่อง)</option>
                                             </select>
                                         </td>
                                     </tr>
@@ -1034,6 +1131,30 @@
                         </table>
                         </div>
                     </div>
+
+                    {editTarget && (
+                        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => setEditTarget(null)}>
+                            <form onSubmit={saveEdit} className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6 space-y-4" onClick={e => e.stopPropagation()}>
+                                <h3 className="text-lg font-bold text-gray-800"><i className="fas fa-edit text-blue-600 mr-2"></i>แก้ไขรายการจำนำ <span className="font-mono text-purple-600">{editTarget.id}</span></h3>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div><label className="text-xs text-gray-500">ชื่อลูกค้าผู้จำนำ</label><input required value={editForm.name} onChange={e => setEditForm({...editForm, name: e.target.value})} className="w-full border p-2.5 rounded-xl text-sm" /></div>
+                                    <div><label className="text-xs text-gray-500">เบอร์โทรศัพท์</label><input value={editForm.phone} onChange={e => setEditForm({...editForm, phone: e.target.value})} className="w-full border p-2.5 rounded-xl text-sm" /></div>
+                                    <div className="md:col-span-2"><label className="text-xs text-gray-500">เลขบัตรประชาชน</label><input value={editForm.idCard} onChange={e => setEditForm({...editForm, idCard: e.target.value})} className="w-full border p-2.5 rounded-xl text-sm" /></div>
+                                    <BrandModelPicker brand={editForm.brand} model={editForm.modelSel} onChange={({ brand, model, resolved }) => setEditForm({ ...editForm, brand, modelSel: model, model: resolved || editForm.model })} />
+                                    <div className="md:col-span-2"><label className="text-xs text-gray-500">ชื่อ/รุ่นเครื่อง (เลือกจากรายการด้านบน หรือพิมพ์แก้เองได้)</label><input required value={editForm.model} onChange={e => setEditForm({...editForm, model: e.target.value})} className="w-full border p-2.5 rounded-xl text-sm" /></div>
+                                    <div><label className="text-xs text-gray-500">หมายเลข IMEI / Serial</label><input value={editForm.imei} onChange={e => setEditForm({...editForm, imei: e.target.value})} className="w-full border p-2.5 rounded-xl text-sm" /></div>
+                                    <div><label className="text-xs text-gray-500">ยอดเงินจำนำ (฿)</label><input required type="number" min="0" step="any" value={editForm.principal} onChange={e => setEditForm({...editForm, principal: e.target.value})} className="w-full border p-2.5 rounded-xl text-sm" /></div>
+                                    <div><label className="text-xs text-gray-500">วันที่รับจำนำ</label><input type="date" value={editForm.startDate} onChange={e => setEditForm({...editForm, startDate: e.target.value})} className="w-full border p-2.5 rounded-xl text-sm" /></div>
+                                    <div><label className="text-xs text-gray-500">วันที่ครบกำหนด</label><input type="date" value={editForm.dueDate} onChange={e => setEditForm({...editForm, dueDate: e.target.value})} className="w-full border p-2.5 rounded-xl text-sm" /></div>
+                                </div>
+                                <div className="text-xs text-gray-500 bg-slate-50 border rounded-xl p-3">ดอกเบี้ย 10% จะคำนวณใหม่จากยอดจำนำ และถ้าแก้ยอด/รุ่น รายการ "ปล่อยเงินรับจำนำ" ในสมุดบัญชีจะถูกแก้ให้ตรงกัน</div>
+                                <div className="flex gap-3">
+                                    <button type="button" onClick={() => setEditTarget(null)} className="flex-1 border border-gray-300 text-gray-600 font-bold py-2.5 rounded-xl hover:bg-gray-50">ยกเลิก</button>
+                                    <button type="submit" className="flex-1 bg-blue-600 text-white font-bold py-2.5 rounded-xl hover:bg-blue-700 shadow-md">บันทึกการแก้ไข</button>
+                                </div>
+                            </form>
+                        </div>
+                    )}
 
                     {renewTarget && (
                         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => setRenewTarget(null)}>
@@ -1288,6 +1409,12 @@
                                         const dProfit = g.items.reduce((s, r) => s + (r.profit || 0), 0);
                                         return (
                                             <React.Fragment key={g.k}>
+                                                <tr className="bg-blue-100 border-t-4 border-blue-300 text-sm font-bold text-blue-900">
+                                                    <td colSpan={8} className="p-3">
+                                                        <i className="fas fa-calendar-day mr-2"></i>{g.d.toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+                                                        <span className="ml-3 text-xs font-medium text-blue-700">({g.items.length} รายการ)</span>
+                                                    </td>
+                                                </tr>
                                                 {g.items.map(r => editIdx === r._i ? (
                                                     <tr key={r._i} className="bg-yellow-50 border-b text-sm">
                                                         <td className="p-2"><input type="date" value={draft.date} onChange={e => setDraft({ ...draft, date: e.target.value })} className={inp} /></td>
@@ -1304,7 +1431,7 @@
                                                     </tr>
                                                 ) : (
                                                     <tr key={r._i} className="border-b hover:bg-gray-50 text-sm transition">
-                                                        <td className="p-3.5 text-gray-500 whitespace-nowrap">{r._d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' })} <span className="text-xs text-gray-400">{r._d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}</span></td>
+                                                        <td className="p-3.5 text-gray-500 whitespace-nowrap"><span className="text-gray-500">{r._d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.</span></td>
                                                         <td className="p-3.5 font-medium">
                                                             {r.detail}
                                                             {r.qty && r.qty !== '-' ? <span className="text-xs text-gray-400"> (x{r.qty})</span> : null}
@@ -1320,18 +1447,19 @@
                                                         </td>
                                                     </tr>
                                                 ))}
-                                                <tr className="bg-amber-50/70 border-b text-sm font-bold">
-                                                    <td className="p-3.5 text-amber-800" colSpan={3}>สรุปวันที่ {g.d.toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' })} — ขายได้วันนี้ ฿{dInc.toLocaleString()}</td>
+                                                <tr className="bg-amber-100 border-b-2 border-amber-300 text-sm font-bold">
+                                                    <td className="p-3.5 text-amber-800" colSpan={3}>สรุปวันที่ {g.d.toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' })} — รายรับ ฿{dInc.toLocaleString()} · รายจ่าย ฿{dExp.toLocaleString()}</td>
                                                     <td className="p-3.5 text-right text-green-700">{dInc.toLocaleString()}</td>
                                                     <td className="p-3.5 text-right text-red-700">{dExp.toLocaleString()}</td>
                                                     <td className="p-3.5 text-right text-purple-700">{dProfit.toLocaleString()}</td>
                                                     <td className="p-3.5 text-amber-800" colSpan={2}>สุทธิ ฿{(dInc - dExp).toLocaleString()}</td>
                                                 </tr>
+                                                <tr><td colSpan={8} className="h-3 bg-slate-50"></td></tr>
                                             </React.Fragment>
                                         );
                                     })}
                                     <tr className="bg-blue-50 text-sm font-extrabold">
-                                        <td className="p-3.5 text-blue-800" colSpan={3}>รวมทั้งเดือน {TH_MONTHS[selectedMonth]} {selectedYear} — ขายได้ ฿{totalIncome.toLocaleString()}</td>
+                                        <td className="p-3.5 text-blue-800" colSpan={3}>รวมทั้งเดือน {TH_MONTHS[selectedMonth]} {selectedYear} — รายรับรวม ฿{totalIncome.toLocaleString()}</td>
                                         <td className="p-3.5 text-right text-green-700">{totalIncome.toLocaleString()}</td>
                                         <td className="p-3.5 text-right text-red-700"></td>
                                         <td className="p-3.5 text-right text-purple-700">{monthSalesProfit.toLocaleString()}</td>
@@ -1704,18 +1832,38 @@
                                     <table className="w-full text-left border-collapse">
                                         <thead>
                                             <tr className="border-b-2 border-black">
-                                                <th className="py-2">วันที่/เวลา</th><th className="py-2">ประเภท</th><th className="py-2">รายละเอียด</th><th className="py-2 text-right">ยอดเงิน (บาท)</th>
+                                                <th className="py-2">เวลา</th><th className="py-2">ประเภท</th><th className="py-2">รายละเอียด</th><th className="py-2 text-right">ยอดเงิน (บาท)</th>
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {printConfig.data.transactions.map((t, i) => (
-                                                <tr key={i} className="border-b">
-                                                    <td className="py-3 text-sm">{t.date}</td>
-                                                    <td className="py-3 text-sm">{t.type}</td>
-                                                    <td className="py-3 text-sm">{t.detail}</td>
-                                                    <td className="py-3 text-sm text-right font-bold">฿{(t.amount || 0).toLocaleString()}</td>
-                                                </tr>
-                                            ))}
+                                            {(() => {
+                                                const groups = [];
+                                                printConfig.data.transactions.forEach(t => {
+                                                    const d = t._d || new Date(t.rawDate || t.id);
+                                                    const k = dayKey(d);
+                                                    let g = groups[groups.length - 1];
+                                                    if (!g || g.k !== k) { g = { k, d, items: [] }; groups.push(g); }
+                                                    g.items.push(t);
+                                                });
+                                                return groups.map(g => {
+                                                    const gi = g.items.filter(t => t.type === 'รายรับ').reduce((s, t) => s + (t.amount || 0), 0);
+                                                    const ge = g.items.filter(t => t.type === 'รายจ่าย').reduce((s, t) => s + (t.amount || 0), 0);
+                                                    return (
+                                                        <React.Fragment key={g.k}>
+                                                            <tr className="bg-gray-100 border-b border-t-2 border-black"><td colSpan={4} className="py-2 px-1 text-sm font-bold">{g.d.toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })} ({g.items.length} รายการ)</td></tr>
+                                                            {g.items.map((t, i) => (
+                                                                <tr key={i} className="border-b">
+                                                                    <td className="py-3 text-sm">{(t._d || new Date(t.rawDate || t.id)).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.</td>
+                                                                    <td className="py-3 text-sm">{t.type}</td>
+                                                                    <td className="py-3 text-sm">{t.detail}</td>
+                                                                    <td className="py-3 text-sm text-right font-bold">฿{(t.amount || 0).toLocaleString()}</td>
+                                                                </tr>
+                                                            ))}
+                                                            <tr className="border-b-2 text-sm font-bold"><td colSpan={3} className="py-2 text-right">สรุปวัน: รายรับ ฿{gi.toLocaleString()} · รายจ่าย ฿{ge.toLocaleString()} · สุทธิ</td><td className="py-2 text-right">฿{(gi - ge).toLocaleString()}</td></tr>
+                                                        </React.Fragment>
+                                                    );
+                                                });
+                                            })()}
                                         </tbody>
                                     </table>
                                 </div>
@@ -1804,7 +1952,7 @@
                                     {activeTab === 'dashboard' && <DashboardTab inventory={inventory} pawns={pawns} repairs={repairs} sales={sales} transactions={transactions} />}
                                     {activeTab === 'inventory' && <InventoryTab inventory={inventory} setInventory={setInventory} userRole={userRole} addTransaction={addTransaction} showToast={showToast} onPrint={handlePrint} />}
                                     {activeTab === 'repair' && <RepairTab repairs={repairs} setRepairs={setRepairs} inventory={inventory} setInventory={setInventory} addTransaction={addTransaction} showToast={showToast} onPrint={handlePrint} />}
-                                    {activeTab === 'pawn' && <PawnTab pawns={pawns} setPawns={setPawns} showToast={showToast} addTransaction={addTransaction} />}
+                                    {activeTab === 'pawn' && <PawnTab pawns={pawns} setPawns={setPawns} setTransactions={setTransactions} showToast={showToast} addTransaction={addTransaction} />}
                                     {activeTab === 'crm' && <CRMTab repairs={repairs} pawns={pawns} onPrintRepair={handlePrint} />}
                                     {activeTab === 'transactions' && <TransactionTab transactions={transactions} setTransactions={setTransactions} showToast={showToast} onPrint={handlePrint} />}
                                     {activeTab === 'pos' && <POSTab inventory={inventory} setInventory={setInventory} addTransaction={addTransaction} addSale={s => setSales([...sales, s])} showToast={showToast} onPrint={handlePrint} />}
