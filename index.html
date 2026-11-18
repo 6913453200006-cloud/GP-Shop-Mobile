@@ -213,7 +213,7 @@
         };
         const padImages = (list) => { const a = [...list]; while (a.length < MIN_IMAGE_SLOTS) a.push(''); return a; };
         const packImages = (list) => {
-            const clean = list.map(s => (s || '').trim()).filter(Boolean);
+            const clean = list.map(s => (s || '').trim()).filter(s => s && !s.startsWith('data:')); // ไม่เก็บรูปแบบฝังไฟล์ลงข้อมูล
             // imageUrl เก็บเฉพาะรูปที่เป็นลิงก์ (ไม่เก็บรูปไฟล์ซ้ำ เพื่อประหยัดพื้นที่) - ใช้ images เป็นหลัก
             return { images: clean.join('|'), imageUrl: clean.find(s => !s.startsWith('data:')) || '' };
         };
@@ -228,14 +228,10 @@
             return <img src={src} alt={alt || ''} loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)} className={className} />;
         };
 
-        // ===== อัปโหลดรูปจากเครื่อง / ถ่ายรูป =====
-        // รูปจากเครื่องจะถูกย่อและบีบอัดเป็น JPEG แล้วเก็บในข้อมูลสินค้าโดยตรง (ใช้ได้ทุกอุปกรณ์ที่เปิดระบบ)
-        // งบขนาดรูปรวมต่อสินค้า 1 ชิ้น (จำนวนตัวอักษร) - Google Sheets เก็บได้ไม่เกิน 50,000 ตัวอักษรต่อ 1 ช่อง
-        // ถ้าตรวจแล้วว่าชีตของคุณรับได้มากกว่านี้ ค่อยเพิ่มเลขนี้เพื่อให้รูปคมขึ้น
-        const IMAGE_CHAR_BUDGET_PER_ITEM = 44000;
+        // ===== อัปโหลดรูปจากเครื่อง / ถ่ายรูป ขึ้น Google Drive =====
+        // รูปจะถูกย่อ (ด้านยาวสุด 1000px) แล้วส่งขึ้นโฟลเดอร์ GP_Images ใน Google Drive ผ่าน Apps Script (คำสั่ง uploadImage)
+        // ในข้อมูลสินค้าเก็บเฉพาะ "ลิงก์รูป" จึงไม่กินพื้นที่ในชีต
         const isDataUrl = (s) => typeof s === 'string' && s.startsWith('data:');
-        const dataChars = (list) => list.reduce((n, s) => n + (isDataUrl(s) ? s.length : 0), 0);
-        const kbOf = (chars) => Math.max(1, Math.round(chars * 0.75 / 1024));
 
         const loadImageFromFile = (file) => new Promise((resolve, reject) => {
             const url = URL.createObjectURL(file);
@@ -244,74 +240,95 @@
             img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('อ่านไฟล์รูปไม่ได้ (รองรับ JPG / PNG / WebP)')); };
             img.src = url;
         });
-        // ย่อรูปลงทีละขั้นจนขนาด (ตัวอักษร base64) ไม่เกิน maxChars
-        const compressImage = async (file, maxChars) => {
+        // ย่อรูปแล้วแปลงเป็น JPEG (data URL)
+        const resizeToDataUrl = async (file, maxSide = 1000, quality = 0.82) => {
             const img = await loadImageFromFile(file);
             const w0 = img.naturalWidth || img.width, h0 = img.naturalHeight || img.height;
-            let best = '', lastScale = -1;
-            for (const maxSide of [720, 600, 480, 400, 340, 280, 240, 200]) {
-                const scale = Math.min(1, maxSide / Math.max(w0, h0));
-                if (scale === 1 && lastScale === 1) continue; // รูปเล็กกว่าขนาดนี้อยู่แล้ว ไม่ต้องลองซ้ำ
-                lastScale = scale;
-                const w = Math.max(1, Math.round(w0 * scale)), h = Math.max(1, Math.round(h0 * scale));
-                const canvas = document.createElement('canvas');
-                canvas.width = w; canvas.height = h;
-                const ctx = canvas.getContext('2d');
-                ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, w, h); // พื้นขาวสำหรับรูป PNG โปร่งใส
-                ctx.drawImage(img, 0, 0, w, h);
-                for (const q of [0.7, 0.55, 0.42]) {
-                    best = canvas.toDataURL('image/jpeg', q);
-                    if (best.length <= maxChars) return best;
-                }
-            }
-            return best;
+            const scale = Math.min(1, maxSide / Math.max(w0, h0));
+            const w = Math.max(1, Math.round(w0 * scale)), h = Math.max(1, Math.round(h0 * scale));
+            const canvas = document.createElement('canvas');
+            canvas.width = w; canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, w, h); // พื้นขาวสำหรับรูป PNG โปร่งใส
+            ctx.drawImage(img, 0, 0, w, h);
+            return canvas.toDataURL('image/jpeg', quality);
+        };
+        // ส่งรูปขึ้น Google Drive แล้วได้ลิงก์กลับมา
+        const uploadToDrive = async (dataUrl, name) => {
+            const m = /^data:([^;]+);base64,(.*)$/.exec(dataUrl);
+            if (!m) throw new Error('ข้อมูลรูปไม่ถูกต้อง');
+            const response = await fetch(SHEET_API_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                body: JSON.stringify({ action: 'uploadImage', data: m[2], mime: m[1], name })
+            });
+            const result = await response.json();
+            if (!result.success) throw new Error(result.message || 'อัปโหลดรูปไม่สำเร็จ');
+            return result.url;
         };
 
         // ช่องรูปสินค้า (ขั้นต่ำ 4 ช่อง เพิ่มได้ถึง 8): เลือกไฟล์ / ถ่ายรูป / วางลิงก์ก็ได้
-        const ImageUrlsEditor = ({ urls, onChange }) => {
+        const ImageUrlsEditor = ({ urls, onChange, onBusyChange }) => {
             const list = padImages(urls);
             const listRef = useRef(list); listRef.current = list;
             const onChangeRef = useRef(onChange); onChangeRef.current = onChange;
             const fileRef = useRef(null);
             const camRef = useRef(null);
             const [busy, setBusy] = useState(false);
+            const [progress, setProgress] = useState('');
             const [msg, setMsg] = useState('');
             const canCapture = typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
             const setAt = (i, v) => { const a = [...list]; a[i] = v; onChange(a); };
             const filled = list.filter(s => s.trim()).length;
-            const used = dataChars(list);
+            const startBusy = () => { setBusy(true); setMsg(''); if (onBusyChange) onBusyChange(true); };
+            const endBusy = () => { setBusy(false); setProgress(''); if (onBusyChange) onBusyChange(false); };
+            const putUrl = (url, preferIndex) => {
+                const next = [...listRef.current];
+                let i = (preferIndex !== undefined && preferIndex < next.length) ? preferIndex : next.findIndex(s => !s.trim());
+                if (i === -1) { if (next.length < MAX_IMAGE_SLOTS) { next.push(url); } else return false; }
+                else next[i] = url;
+                listRef.current = next;
+                onChangeRef.current(next);
+                return true;
+            };
 
             const handleFiles = async (fileList) => {
-                const files = Array.from(fileList || []).filter(f => (f.type || '').startsWith('image/') || /\.(jpe?g|png|webp|gif|heic|heif)$/i.test(f.name || ''));
+                let files = Array.from(fileList || []).filter(f => (f.type || '').startsWith('image/') || /\.(jpe?g|png|webp|gif|heic|heif)$/i.test(f.name || ''));
                 if (files.length === 0) return;
-                setBusy(true); setMsg('');
-                try {
-                    const cur = listRef.current;
-                    const filledNow = cur.filter(s => s.trim()).length;
-                    // แบ่งงบขนาดให้พอสำหรับอย่างน้อย 4 รูป
-                    const reserve = Math.max(files.length, MIN_IMAGE_SLOTS - filledNow, 1);
-                    const cap = Math.max(4000, Math.floor((IMAGE_CHAR_BUDGET_PER_ITEM - dataChars(cur)) / reserve));
-                    const results = [];
-                    for (const f of files) results.push(await compressImage(f, cap));
-                    const next = [...listRef.current];
-                    let skipped = 0;
-                    results.forEach(r => {
-                        const i = next.findIndex(s => !s.trim());
-                        if (i !== -1) next[i] = r;
-                        else if (next.length < MAX_IMAGE_SLOTS) next.push(r);
-                        else skipped++;
-                    });
-                    onChangeRef.current(next);
-                    const notes = [];
-                    if (skipped) notes.push(`ช่องรูปเต็ม ${MAX_IMAGE_SLOTS} รูปแล้ว ข้ามไป ${skipped} รูป`);
-                    if (dataChars(next) > IMAGE_CHAR_BUDGET_PER_ITEM) notes.push('ขนาดรวมรูปจากเครื่องเกินที่แนะนำ อาจบันทึกขึ้น Google Sheets ไม่ได้ ลองลบบางรูปหรือใช้ลิงก์แทน');
-                    setMsg(notes.join(' · '));
-                } catch (err) {
-                    setMsg('⚠️ ' + (err && err.message ? err.message : 'เพิ่มรูปไม่สำเร็จ'));
+                const cur = listRef.current;
+                const free = cur.filter(s => !s.trim()).length + (MAX_IMAGE_SLOTS - cur.length);
+                const skipped = Math.max(0, files.length - free);
+                files = files.slice(0, free);
+                if (files.length === 0) { setMsg(`ช่องรูปเต็ม ${MAX_IMAGE_SLOTS} รูปแล้ว ลบรูปเดิมก่อนเพิ่มใหม่`); return; }
+                startBusy();
+                let failed = 0, lastErr = '';
+                for (let k = 0; k < files.length; k++) {
+                    setProgress(`กำลังอัปโหลดรูป ${k + 1}/${files.length}...`);
+                    try {
+                        const dataUrl = await resizeToDataUrl(files[k]);
+                        const url = await uploadToDrive(dataUrl, `gp_${Date.now()}_${k}.jpg`);
+                        putUrl(url);
+                    } catch (err) {
+                        failed++; lastErr = (err && err.message) ? err.message : 'ไม่ทราบสาเหตุ';
+                    }
                 }
-                setBusy(false);
+                const notes = [];
+                if (failed) notes.push(`⚠️ อัปโหลดไม่สำเร็จ ${failed} รูป (${lastErr}) - ตรวจอินเทอร์เน็ต และว่า Apps Script ถูก Deploy เวอร์ชันล่าสุดแล้ว`);
+                if (skipped) notes.push(`ช่องรูปเต็ม ข้ามไป ${skipped} รูป`);
+                setMsg(notes.join(' · '));
+                endBusy();
             };
             const onPick = (e) => { const fl = Array.from(e.target.files || []); e.target.value = ''; handleFiles(fl); };
+
+            // รูปค้างแบบฝังไฟล์ (จากเวอร์ชันก่อนหน้า) - อัปโหลดขึ้น Drive ทีละช่อง
+            const uploadLegacy = async (i) => {
+                startBusy(); setProgress('กำลังอัปโหลดรูป...');
+                try {
+                    const url = await uploadToDrive(listRef.current[i], `gp_${Date.now()}_${i}.jpg`);
+                    putUrl(url, i);
+                } catch (err) { setMsg('⚠️ ' + ((err && err.message) || 'อัปโหลดไม่สำเร็จ')); }
+                endBusy();
+            };
 
             return (
                 <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
@@ -329,11 +346,11 @@
                                 <i className="fas fa-camera mr-1.5"></i>ถ่ายรูป
                             </button>
                         )}
-                        {busy && <span className="text-sm text-gray-500 self-center"><i className="fas fa-spinner fa-spin mr-1.5"></i>กำลังย่อรูป...</span>}
+                        {busy && <span className="text-sm text-gray-500 self-center"><i className="fas fa-spinner fa-spin mr-1.5"></i>{progress || 'กำลังทำงาน...'}</span>}
                         <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={onPick} />
                         <input ref={camRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={onPick} />
                     </div>
-                    <div className="text-[11px] text-gray-400">เลือกได้หลายรูปพร้อมกัน ระบบจะย่อรูปให้อัตโนมัติ หรือจะวางลิงก์รูป (https://...) ในช่องด้านล่างก็ได้</div>
+                    <div className="text-[11px] text-gray-400">เลือกได้หลายรูปพร้อมกัน รูปจะถูกย่อและอัปโหลดขึ้น Google Drive อัตโนมัติ (รอสักครู่ต่อรูป) หรือจะวางลิงก์รูป (https://...) ในช่องด้านล่างก็ได้</div>
                     {msg && <div className="text-xs text-red-500 font-medium">{msg}</div>}
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -343,7 +360,7 @@
                                 <div className="flex-1 min-w-0">
                                     <label className="text-xs text-gray-500">{i === 0 ? 'รูปที่ 1 (รูปหลัก)' : `รูปที่ ${i + 1}`}</label>
                                     {isDataUrl(u) ? (
-                                        <div className="w-full border border-green-200 p-2 rounded-lg text-sm bg-green-50 text-green-700 truncate"><i className="fas fa-check-circle mr-1.5"></i>รูปจากเครื่อง · {kbOf(u.length)} KB</div>
+                                        <button type="button" disabled={busy} onClick={() => uploadLegacy(i)} className="w-full border border-amber-300 p-2 rounded-lg text-sm bg-amber-50 text-amber-700 text-left truncate disabled:opacity-50"><i className="fas fa-cloud-arrow-up mr-1.5"></i>ยังไม่ได้อัปโหลด - กดเพื่ออัปโหลด</button>
                                     ) : (
                                         <input value={u} onChange={e => setAt(i, e.target.value)} className="w-full border p-2 rounded-lg text-sm bg-white" placeholder="วางลิงก์ https://..." />
                                     )}
@@ -354,12 +371,9 @@
                             </div>
                         ))}
                     </div>
-                    <div className="flex justify-between items-center">
-                        {list.length < MAX_IMAGE_SLOTS ? (
-                            <button type="button" onClick={() => onChange([...list, ''])} className="text-xs font-bold text-blue-600 hover:text-blue-800"><i className="fas fa-plus mr-1"></i>เพิ่มช่องรูป</button>
-                        ) : <span></span>}
-                        {used > 0 && <span className={`text-[11px] ${used > IMAGE_CHAR_BUDGET_PER_ITEM ? 'text-red-500 font-bold' : 'text-gray-400'}`}>ขนาดรูปจากเครื่องรวม {kbOf(used)} KB (ไม่ควรเกิน ~{kbOf(IMAGE_CHAR_BUDGET_PER_ITEM)} KB)</span>}
-                    </div>
+                    {list.length < MAX_IMAGE_SLOTS && (
+                        <button type="button" onClick={() => onChange([...list, ''])} className="text-xs font-bold text-blue-600 hover:text-blue-800"><i className="fas fa-plus mr-1"></i>เพิ่มช่องรูป</button>
+                    )}
                 </div>
             );
         };
@@ -780,6 +794,7 @@
             const isPhoneCategory = formData.category === 'เครื่องใหม่' || formData.category === 'เครื่องมือ2';
             const [edit, setEdit] = useState(null);
             const [viewCat, setViewCat] = useState('all');
+            const [imgBusy, setImgBusy] = useState(false);
             const [galleryItem, setGalleryItem] = useState(null);
             const visibleItems = viewCat === 'all' ? inventory : inventory.filter(i => i.category === viewCat);
             const adjustQty = (id, d) => setInventory(prev => prev.map(i => i.id === id ? { ...i, qty: Math.max(0, i.qty + d) } : i));
@@ -885,9 +900,9 @@
                                 </div>
                             )}
 
-                            <ImageUrlsEditor urls={formData.images} onChange={images => setFormData({ ...formData, images })} />
+                            <ImageUrlsEditor urls={formData.images} onChange={images => setFormData({ ...formData, images })} onBusyChange={setImgBusy} />
 
-                            <button type="submit" className="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-xl hover:bg-blue-700 shadow-md transition transform active:scale-[0.99]">เพิ่มสินค้าใหม่</button>
+                            <button type="submit" disabled={imgBusy} className="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-xl hover:bg-blue-700 shadow-md transition transform active:scale-[0.99] disabled:opacity-50">{imgBusy ? 'กำลังอัปโหลดรูป... กรุณารอสักครู่' : 'เพิ่มสินค้าใหม่'}</button>
                         </form>
                     </div>
 
@@ -1021,10 +1036,10 @@
                                         {field('color', 'สีของตัวเครื่อง', 'text', false)}
                                     </>)}
                                 </div>
-                                <ImageUrlsEditor urls={edit.imgs || []} onChange={imgs => setEdit({ ...edit, imgs })} />
+                                <ImageUrlsEditor urls={edit.imgs || []} onChange={imgs => setEdit({ ...edit, imgs })} onBusyChange={setImgBusy} />
                                 <div className="flex gap-3">
                                     <button type="button" onClick={() => setEdit(null)} className="flex-1 border py-2.5 rounded-xl font-bold text-gray-600 hover:bg-gray-50">ยกเลิก</button>
-                                    <button type="submit" className="flex-1 bg-blue-600 text-white py-2.5 rounded-xl font-bold hover:bg-blue-700 shadow-md">บันทึก</button>
+                                    <button type="submit" disabled={imgBusy} className="flex-1 bg-blue-600 text-white py-2.5 rounded-xl font-bold hover:bg-blue-700 shadow-md disabled:opacity-50">{imgBusy ? 'กำลังอัปโหลดรูป...' : 'บันทึก'}</button>
                                 </div>
                             </form>
                         </div>
@@ -1909,12 +1924,20 @@
                 setIsSyncing(true);
                 try {
                     const dbData = { inventory, transactions, repairs, pawns, sales };
-                    await fetch(SHEET_API_URL, {
+                    const res = await fetch(SHEET_API_URL, {
                         method: 'POST',
                         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
                         body: JSON.stringify(dbData)
                     });
-                    showToast('สำรองข้อมูลขึ้น Google Sheets สำเร็จ!');
+                    let result = null;
+                    try { result = await res.json(); } catch (e) {}
+                    if (result && result.status === 'success') {
+                        showToast('สำรองข้อมูลขึ้น Google Sheets สำเร็จ!');
+                    } else if (result && result.status === 'rejected') {
+                        showToast('⚠️ Google Sheets ไม่รับข้อมูล: ' + (result.reason || 'ไม่ทราบสาเหตุ'));
+                    } else {
+                        showToast('⚠️ บันทึกขึ้น Google Sheets ไม่สำเร็จ (ข้อมูลอาจใหญ่เกิน 50,000 ตัวอักษรต่อช่อง)');
+                    }
                 } catch (error) {
                     console.error(error);
                     showToast('เกิดข้อผิดพลาดในการสำรองข้อมูล');
