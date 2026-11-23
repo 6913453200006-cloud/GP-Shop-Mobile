@@ -60,6 +60,26 @@
             to { opacity: 1; }
         }
 
+
+        /* ===== สมุดบัญชีรายรับ-รายจ่าย (หน้าตาแบบสมุดบัญชี) ===== */
+        .ledger-book { background:#fffef7; border:2px solid #1e3a5f; border-radius:14px; overflow:hidden; box-shadow:0 4px 14px rgba(30,58,95,.12); }
+        .ledger-cover { background:linear-gradient(90deg,#1e3a5f,#274b78); color:#fff; padding:.8rem 1.1rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:.5rem; }
+        .ledger-table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }
+        .ledger-table th { background:#eaf0f8; color:#1e3a5f; font-weight:700; font-size:.8rem; padding:.7rem .75rem; border:1px solid #b8c7dc; border-bottom:3px double #1e3a5f; text-align:center; white-space:nowrap; }
+        .ledger-table td { padding:.6rem .75rem; border-bottom:1px solid #c9d8ec; border-right:1px solid #eadfc2; font-size:.875rem; vertical-align:middle; }
+        .ledger-table th:last-child, .ledger-table td:last-child { border-right:none; }
+        .ledger-table .num { text-align:right; white-space:nowrap; font-weight:600; }
+        .ledger-table .money-start { border-left:3px double #b91c1c; }
+        .ledger-table .t-inc { color:#15803d; }
+        .ledger-table .t-exp { color:#b91c1c; }
+        .ledger-table .t-prof { color:#7e22ce; }
+        .ledger-table .t-neg { color:#b91c1c; }
+        .ledger-table .t-bal { background:#f6f9fd; }
+        .ledger-row:hover td { background:#fff6d6; }
+        .ledger-day td { background:#e8eef7; border-top:2px solid #1e3a5f; border-bottom:1px solid #9fb3cf; font-weight:700; color:#1e3a5f; }
+        .ledger-bf td { background:#f3f6fa; font-style:italic; color:#475569; }
+        .ledger-sum td { background:#fff4cf; border-top:2px solid #1e3a5f; border-bottom:4px double #1e3a5f; font-weight:800; color:#1e3a5f; }
+
         /* Modal scale transition */
         .modal-enter {
             animation: modalScale 0.25s ease-out forwards;
@@ -1665,8 +1685,21 @@
             const monthSalesProfit = monthRows.reduce((s, r) => s + (r.profit || 0), 0); // กำไรจากรายการซื้อขายสินค้า (ราคาขาย-ต้นทุน) เดือนนี้
             const todayIncome = ledger.filter(r => dayKey(r._d) === dayKey(now)).reduce((s, r) => s + r.inc, 0);
 
+            // แสดงรายการล่าสุดไว้บนสุด (ยอดคงเหลือคำนวณตามลำดับเวลาจริงมาแล้วใน buildLedger จึงยังถูกต้อง)
+            const showBal = ledgerTab === 'all'; // ยอดคงเหลือสะสมแสดงเฉพาะแท็บ "รวมทุกรายการ" เพื่อไม่ให้สับสนตอนกรอง
+            const NC = showBal ? 9 : 8;
+            const monthStart = new Date(selectedYear, selectedMonth, 1);
+            const beforeRows = ledger.filter(r => r._d < monthStart);
+            const openingBal = beforeRows.length ? beforeRows[beforeRows.length - 1].bal : 0; // ยอดยกมา
+            const closingBal = monthRows.length ? monthRows[monthRows.length - 1].bal : openingBal; // ยอดยกไป
+            const fInc = filteredRows.reduce((a, r) => a + r.inc, 0);
+            const fExp = filteredRows.reduce((a, r) => a + r.exp, 0);
+            const fProfit = filteredRows.reduce((a, r) => a + (r.profit || 0), 0);
+            const money = (n) => (Number(n) || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            const balText = (n) => (n < 0 ? `(${money(Math.abs(n))})` : money(n));
+
             const days = [];
-            filteredRows.forEach(r => {
+            [...filteredRows].reverse().forEach(r => {
                 const k = dayKey(r._d);
                 let g = days[days.length - 1];
                 if (!g || g.k !== k) { g = { k, d: r._d, items: [] }; days.push(g); }
@@ -1776,28 +1809,46 @@
                         </form>
                     )}
 
-                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                    <div className="ledger-book">
+                        <div className="ledger-cover">
+                            <div className="font-bold text-base"><i className="fas fa-book mr-2"></i>สมุดบัญชีรายรับ-รายจ่าย · {TH_MONTHS[selectedMonth]} {selectedYear + 543}</div>
+                            <div className="text-xs opacity-90"><i className="fas fa-arrow-down-wide-short mr-1"></i>เรียงจากรายการล่าสุด → เก่าสุด</div>
+                        </div>
                         <div className="overflow-x-auto">
-                            <table className="w-full text-left min-w-[960px]">
-                                <thead className="bg-slate-50 text-slate-600 text-sm">
+                            <table className="ledger-table text-left min-w-[1040px]">
+                                <thead>
                                     <tr>
-                                        <th className="p-3.5 border-b">วันที่</th><th className="p-3.5 border-b">รายการ (คำอธิบาย)</th><th className="p-3.5 border-b">เลขที่เอกสารอ้างอิง</th>
-                                        <th className="p-3.5 border-b text-right">รายรับ (บาท)</th><th className="p-3.5 border-b text-right">รายจ่าย (บาท)</th><th className="p-3.5 border-b text-right">กำไร (บาท)</th>
-                                        <th className="p-3.5 border-b">หมายเหตุ</th><th className="p-3.5 border-b text-center">จัดการ</th>
+                                        <th>วันที่ / เวลา</th><th>รายการ (คำอธิบาย)</th><th>เลขที่เอกสารอ้างอิง</th>
+                                        <th className="money-start t-inc">รายรับ (บาท)</th><th className="t-exp">รายจ่าย (บาท)</th>
+                                        {showBal && <th>คงเหลือ (บาท)</th>}
+                                        <th className="t-prof">กำไร (บาท)</th><th>หมายเหตุ</th><th>จัดการ</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {days.length === 0 && <tr><td colSpan={8} className="p-8 text-center text-gray-400">ไม่มีรายการในส่วนนี้</td></tr>}
+                                    {days.length === 0 && <tr><td colSpan={NC} className="p-8 text-center text-gray-400">ไม่มีรายการในส่วนนี้</td></tr>}
+                                    {showBal && days.length > 0 && (
+                                        <tr className="ledger-bf">
+                                            <td colSpan={3}>ยอดคงเหลือยกไป (ณ สิ้นรายการล่าสุดของเดือน{TH_MONTHS[selectedMonth]})</td>
+                                            <td className="money-start"></td><td></td>
+                                            <td className={`num t-bal ${closingBal < 0 ? 't-neg' : ''}`}>{balText(closingBal)}</td>
+                                            <td colSpan={3}></td>
+                                        </tr>
+                                    )}
                                     {days.map(g => {
-                                        const dInc = g.items.reduce((s, r) => s + r.inc, 0), dExp = g.items.reduce((s, r) => s + r.exp, 0);
-                                        const dProfit = g.items.reduce((s, r) => s + (r.profit || 0), 0);
+                                        const dInc = g.items.reduce((a, r) => a + r.inc, 0), dExp = g.items.reduce((a, r) => a + r.exp, 0);
+                                        const dProfit = g.items.reduce((a, r) => a + (r.profit || 0), 0);
                                         return (
                                             <React.Fragment key={g.k}>
-                                                <tr className="bg-blue-100 border-t-4 border-blue-300 text-sm font-bold text-blue-900">
-                                                    <td colSpan={8} className="p-3">
+                                                <tr className="ledger-day">
+                                                    <td colSpan={3}>
                                                         <i className="fas fa-calendar-day mr-2"></i>{g.d.toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
-                                                        <span className="ml-3 text-xs font-medium text-blue-700">({g.items.length} รายการ)</span>
+                                                        <span className="ml-2 text-xs font-medium opacity-80">({g.items.length} รายการ · รวมวัน)</span>
                                                     </td>
+                                                    <td className="num money-start t-inc">{money(dInc)}</td>
+                                                    <td className="num t-exp">{money(dExp)}</td>
+                                                    {showBal && <td className={`num t-bal ${g.items[0].bal < 0 ? 't-neg' : ''}`}>{balText(g.items[0].bal)}</td>}
+                                                    <td className="num t-prof">{money(dProfit)}</td>
+                                                    <td colSpan={2} className="text-xs font-medium">สุทธิ ฿{money(dInc - dExp)}</td>
                                                 </tr>
                                                 {g.items.map(r => editIdx === r._i ? (
                                                     <tr key={r._i} className="bg-yellow-50 border-b text-sm">
@@ -1806,6 +1857,7 @@
                                                         <td className="p-2"><input value={draft.ref} onChange={e => setDraft({ ...draft, ref: e.target.value })} className={inp} /></td>
                                                         <td className="p-2"><input type="number" min="0" step="any" value={draft.income} onChange={e => setDraft({ ...draft, income: e.target.value })} className={inp + ' text-right'} /></td>
                                                         <td className="p-2"><input type="number" min="0" step="any" value={draft.expense} onChange={e => setDraft({ ...draft, expense: e.target.value })} className={inp + ' text-right'} /></td>
+                                                        {showBal && <td className="p-2 text-right text-gray-400">-</td>}
                                                         <td className="p-2"><input type="number" step="any" placeholder="-" value={draft.profit} onChange={e => setDraft({ ...draft, profit: e.target.value })} className={inp + ' text-right'} /></td>
                                                         <td className="p-2"><input value={draft.note} onChange={e => setDraft({ ...draft, note: e.target.value })} className={inp} /></td>
                                                         <td className="p-2 text-center whitespace-nowrap">
@@ -1814,39 +1866,44 @@
                                                         </td>
                                                     </tr>
                                                 ) : (
-                                                    <tr key={r._i} className="border-b hover:bg-gray-50 text-sm transition">
-                                                        <td className="p-3.5 text-gray-500 whitespace-nowrap"><span className="text-gray-500">{r._d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.</span></td>
-                                                        <td className="p-3.5 font-medium">
+                                                    <tr key={r._i} className="ledger-row">
+                                                        <td className="whitespace-nowrap">
+                                                            <div className="font-semibold text-gray-700">{r._d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' })}</div>
+                                                            <div className="text-xs text-gray-400">{r._d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.</div>
+                                                        </td>
+                                                        <td className="font-medium">
                                                             {r.detail}
                                                             {r.qty && r.qty !== '-' ? <span className="text-xs text-gray-400"> (x{r.qty})</span> : null}
                                                         </td>
-                                                        <td className="p-3.5 text-gray-500 whitespace-nowrap">{r.ref || '-'}</td>
-                                                        <td className="p-3.5 text-right font-bold text-green-600">{r.inc ? r.inc.toLocaleString() : ''}</td>
-                                                        <td className="p-3.5 text-right font-bold text-red-600">{r.exp ? r.exp.toLocaleString() : ''}</td>
-                                                        <td className="p-3.5 text-right font-bold text-purple-600">{(r.profit !== null && r.profit !== undefined) ? r.profit.toLocaleString() : '-'}</td>
-                                                        <td className="p-3.5 text-gray-500">{r.note}</td>
-                                                        <td className="p-3.5 text-center whitespace-nowrap">
+                                                        <td className="text-gray-500 whitespace-nowrap">{r.ref || '-'}</td>
+                                                        <td className="num money-start t-inc">{r.inc ? money(r.inc) : ''}</td>
+                                                        <td className="num t-exp">{r.exp ? money(r.exp) : ''}</td>
+                                                        {showBal && <td className={`num t-bal ${r.bal < 0 ? 't-neg' : ''}`}>{balText(r.bal)}</td>}
+                                                        <td className="num t-prof">{(r.profit !== null && r.profit !== undefined) ? money(r.profit) : '-'}</td>
+                                                        <td className="text-gray-500">{r.note}</td>
+                                                        <td className="text-center whitespace-nowrap">
                                                             <button onClick={() => startEdit(r)} className="text-blue-600 hover:bg-blue-100 p-2 rounded-lg" title="แก้ไข"><i className="fas fa-edit"></i></button>
                                                             <button onClick={() => removeRow(r)} className="text-red-500 hover:bg-red-100 p-2 rounded-lg" title="ลบ"><i className="fas fa-trash"></i></button>
                                                         </td>
                                                     </tr>
                                                 ))}
-                                                <tr className="bg-amber-100 border-b-2 border-amber-300 text-sm font-bold">
-                                                    <td className="p-3.5 text-amber-800" colSpan={3}>สรุปวันที่ {g.d.toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' })} — รายรับ ฿{dInc.toLocaleString()} · รายจ่าย ฿{dExp.toLocaleString()}</td>
-                                                    <td className="p-3.5 text-right text-green-700">{dInc.toLocaleString()}</td>
-                                                    <td className="p-3.5 text-right text-red-700">{dExp.toLocaleString()}</td>
-                                                    <td className="p-3.5 text-right text-purple-700">{dProfit.toLocaleString()}</td>
-                                                    <td className="p-3.5 text-amber-800" colSpan={2}>สุทธิ ฿{(dInc - dExp).toLocaleString()}</td>
-                                                </tr>
-                                                <tr><td colSpan={8} className="h-3 bg-slate-50"></td></tr>
                                             </React.Fragment>
                                         );
                                     })}
-                                    <tr className="bg-blue-50 text-sm font-extrabold">
-                                        <td className="p-3.5 text-blue-800" colSpan={3}>รวมทั้งเดือน {TH_MONTHS[selectedMonth]} {selectedYear} — รายรับรวม ฿{totalIncome.toLocaleString()}</td>
-                                        <td className="p-3.5 text-right text-green-700">{totalIncome.toLocaleString()}</td>
-                                        <td className="p-3.5 text-right text-red-700"></td>
-                                        <td className="p-3.5 text-right text-purple-700">{monthSalesProfit.toLocaleString()}</td>
+                                    {showBal && days.length > 0 && (
+                                        <tr className="ledger-bf">
+                                            <td colSpan={3}>ยอดยกมา (ต้นเดือน{TH_MONTHS[selectedMonth]})</td>
+                                            <td className="money-start"></td><td></td>
+                                            <td className={`num t-bal ${openingBal < 0 ? 't-neg' : ''}`}>{balText(openingBal)}</td>
+                                            <td colSpan={3}></td>
+                                        </tr>
+                                    )}
+                                    <tr className="ledger-sum">
+                                        <td colSpan={3}>{showBal ? `รวมทั้งเดือน ${TH_MONTHS[selectedMonth]} ${selectedYear + 543}` : 'รวมเฉพาะรายการในแท็บนี้ (เดือนที่เลือก)'}</td>
+                                        <td className="num money-start t-inc">{money(fInc)}</td>
+                                        <td className="num t-exp">{money(fExp)}</td>
+                                        {showBal && <td className={`num t-bal ${closingBal < 0 ? 't-neg' : ''}`}>{balText(closingBal)}</td>}
+                                        <td className="num t-prof">{money(fProfit)}</td>
                                         <td colSpan={2}></td>
                                     </tr>
                                 </tbody>
