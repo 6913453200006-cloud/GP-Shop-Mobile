@@ -94,6 +94,12 @@
         // URL ของ Google Apps Script (Web App) สำหรับบันทึก/ดึงข้อมูลอัตโนมัติ
         const SHEET_API_URL = "https://script.google.com/macros/s/AKfycbyH5b7ekdRfJK97w02F946oLfhk-6kJTY1tYo3v36ePE4TCR4uj447EB-zx46CmvjlioQ/exec";
 
+        // รหัสไม่ซ้ำ (เดิมสุ่มแค่ 0-999 ซ้ำง่ายจนแก้สินค้าตัวหนึ่งไปทับอีกตัว): ใช้เวลา + ตัวนับ
+        let _lastTs = 0;
+        const nextTs = () => { const n = Date.now(); _lastTs = n > _lastTs ? n : _lastTs + 1; return _lastTs; };
+        const uid = (p) => `${p}${nextTs().toString(36).toUpperCase()}${Math.floor(Math.random() * 36).toString(36).toUpperCase()}`;
+        const dedupeIds = (arr) => { const seen = new Set(); return arr.map(r => { if (!r) return r; if (seen.has(r.id)) return { ...r, id: uid('INV') }; seen.add(r.id); return r; }); };
+
         // ===== ตัวช่วยสมุดบัญชี =====
         const TH_MONTHS = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
 
@@ -219,13 +225,18 @@
         };
 
         // รูปที่โหลดไม่ได้ / ยังไม่มีรูป จะแสดงไอคอนแทน
+        // รูปจาก Google Drive: ลองลิงก์หลายรูปแบบตามลำดับ (Google จำกัดการโหลดบางรูปแบบเป็นช่วงๆ) ถ้าไม่ได้จริงแสดงไอคอน แตะเพื่อลองใหม่
+        const driveId = (u) => { u = String(u || ''); if (u.startsWith('data:')) return ''; const m = /(?:[?&]id=|\/d\/)([\w-]{20,})/.exec(u); return m ? m[1] : ''; };
+        const imgCandidates = (u) => { const id = driveId(u); return id ? [`https://lh3.googleusercontent.com/d/${id}=w1000`, `https://drive.google.com/thumbnail?id=${id}&sz=w1000`, u] : [u]; };
         const SafeImg = ({ src, alt, className }) => {
-            const [failed, setFailed] = useState(false);
-            useEffect(() => { setFailed(false); }, [src]);
-            if (!src || failed) {
-                return <div className={`${className} bg-gray-100 flex items-center justify-center text-gray-300`}><i className="fas fa-image"></i></div>;
+            const [n, setN] = useState(0);
+            const [tries, setTries] = useState(0);
+            const list = useMemo(() => imgCandidates(src), [src]);
+            useEffect(() => { setN(0); setTries(0); }, [src]);
+            if (!src || n >= list.length) {
+                return <div onClick={src ? (e) => { e.stopPropagation(); setN(0); setTries(t => t + 1); } : undefined} title={src ? 'โหลดรูปไม่ได้ - แตะเพื่อลองใหม่' : ''} className={`${className} bg-gray-100 flex items-center justify-center text-gray-300 ${src ? 'cursor-pointer' : ''}`}><i className={src ? 'fas fa-rotate-right' : 'fas fa-image'}></i></div>;
             }
-            return <img src={src} alt={alt || ''} loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)} className={className} />;
+            return <img key={`${n}-${tries}`} src={list[n]} alt={alt || ''} loading="lazy" referrerPolicy="no-referrer" onError={() => setN(k => k + 1)} className={className} />;
         };
 
         // ===== อัปโหลดรูปจากเครื่อง / ถ่ายรูป ขึ้น Google Drive =====
@@ -835,7 +846,7 @@
                 const cost = parseFloat(formData.cost) || 0;
                 const qty = parseInt(formData.qty) || 0;
                 const newItem = {
-                    id: `INV${Math.floor(Math.random()*1000)}`,
+                    id: uid('INV'),
                     sku: formData.sku, 
                     name: formData.name, 
                     category: formData.category,
@@ -1058,7 +1069,7 @@
                 e.preventDefault();
                 const part = inventory.find(i => i.id === formData.partId);
                 const newRepair = {
-                    id: `REP${Math.floor(Math.random()*10000)}`,
+                    id: uid('REP'),
                     date: new Date().toLocaleDateString('th-TH'),
                     ...formData,
                     partName: part ? part.name : 'ไม่ได้ใช้อะไหล่/ลูกค้านำมาเอง',
@@ -1180,7 +1191,7 @@
                 e.preventDefault();
                 const principal = parseFloat(formData.principal);
                 const newPawn = {
-                    id: `PWN${Math.floor(Math.random()*10000)}`,
+                    id: uid('PWN'),
                     ...formData,
                     principal,
                     interest: principal * 0.10,
@@ -1570,7 +1581,7 @@
                 const amount = parseFloat(nr.amount) || 0;
                 if (amount <= 0) { showToast('กรุณากรอกจำนวนเงิน'); return; }
                 const nd = setDate(nr.date);
-                setTransactions(prev => [{ id: Date.now(), date: nd.toLocaleString('th-TH'), rawDate: nd.toISOString(), type: nr.type, detail: nr.detail, amount, qty: '-', ref: nr.ref, note: nr.note, profit: nr.profit !== '' ? (parseFloat(nr.profit) || 0) : null }, ...prev]);
+                setTransactions(prev => [{ id: nextTs(), date: nd.toLocaleString('th-TH'), rawDate: nd.toISOString(), type: nr.type, detail: nr.detail, amount, qty: '-', ref: nr.ref, note: nr.note, profit: nr.profit !== '' ? (parseFloat(nr.profit) || 0) : null }, ...prev]);
                 setNr(blank());
                 setShowAdd(false);
                 showToast('เพิ่มรายการเรียบร้อย');
@@ -1919,67 +1930,113 @@
             const [isSyncing, setIsSyncing] = useState(false);
             const [dataLoaded, setDataLoaded] = useState(false);
 
+            // ===== ระบบบันทึก/ดึงข้อมูล Google Sheets (แบบกันข้อมูลหาย) =====
+            // ใช้โปรโตคอลเดิมกับ Apps Script (GET ดึงทั้งก้อน / POST ส่งทั้งก้อน) แต่เพิ่ม: สถานะการบันทึก, ลองใหม่อัตโนมัติ,
+            // เก็บสำเนาที่ยังไม่ได้บันทึกไว้ในเครื่อง (กู้คืนได้หลังรีเฟรช), เตือนก่อนปิดหน้า, และดึงข้อมูลล่าสุดเมื่อกลับมาเปิดหน้า
+            const [syncState, setSyncState] = useState('saved'); // saved | pending | saving | error
+            const lastSyncedRef = useRef('');
+            const savingRef = useRef(false);
+            const failRef = useRef(0);
+            const dbRef = useRef({});
+            dbRef.current = { inventory, transactions, repairs, pawns, sales };
+            const DRAFT_KEY = 'gp_unsaved_db_v1';
+            const dbStr = (d) => JSON.stringify({ inventory: d.inventory, transactions: d.transactions, repairs: d.repairs, pawns: d.pawns, sales: d.sales });
+            const isDirty = () => dbStr(dbRef.current) !== lastSyncedRef.current;
+
             const handleSyncToSheet = async () => {
-                if (!dataLoaded) { showToast('ยังไม่ได้โหลดข้อมูลจากชีต จึงไม่บันทึกทับ'); return; }
-                setIsSyncing(true);
+                if (!dataLoaded || savingRef.current) return;
+                const snapshot = dbStr(dbRef.current);
+                if (snapshot === lastSyncedRef.current) { setSyncState('saved'); return; }
+                savingRef.current = true; setIsSyncing(true); setSyncState('saving');
+                let ok = false, why = '';
                 try {
-                    const dbData = { inventory, transactions, repairs, pawns, sales };
                     const res = await fetch(SHEET_API_URL, {
                         method: 'POST',
                         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                        body: JSON.stringify(dbData)
+                        body: snapshot
                     });
                     let result = null;
                     try { result = await res.json(); } catch (e) {}
-                    if (result && result.status === 'success') {
-                        showToast('สำรองข้อมูลขึ้น Google Sheets สำเร็จ!');
-                    } else if (result && result.status === 'rejected') {
-                        showToast('⚠️ Google Sheets ไม่รับข้อมูล: ' + (result.reason || 'ไม่ทราบสาเหตุ'));
-                    } else {
-                        showToast('⚠️ บันทึกขึ้น Google Sheets ไม่สำเร็จ (ข้อมูลอาจใหญ่เกิน 50,000 ตัวอักษรต่อช่อง)');
-                    }
-                } catch (error) {
-                    console.error(error);
-                    showToast('เกิดข้อผิดพลาดในการสำรองข้อมูล');
+                    if (result && result.status === 'success') ok = true;
+                    else if (result && result.status === 'rejected') why = 'Google Sheets ไม่รับข้อมูล: ' + (result.reason || 'ไม่ทราบสาเหตุ');
+                    else why = 'บันทึกขึ้น Google Sheets ไม่สำเร็จ (ข้อมูลอาจใหญ่เกิน 50,000 ตัวอักษรต่อช่อง)';
+                } catch (error) { console.error(error); why = 'ส่งข้อมูลไม่สำเร็จ (อินเทอร์เน็ตหลุด หรือ Apps Script ผิดพลาด - ดูข้อความ error ที่เมนู "การดำเนินการ" ใน Apps Script)'; }
+                savingRef.current = false; setIsSyncing(false);
+                if (ok) {
+                    failRef.current = 0; lastSyncedRef.current = snapshot;
+                    if (!isDirty()) { try { localStorage.removeItem(DRAFT_KEY); } catch (e) {} setSyncState('saved'); showToast('สำรองข้อมูลขึ้น Google Sheets สำเร็จ!'); }
+                    else { setSyncState('pending'); setTimeout(handleSyncToSheet, 300); }
+                } else {
+                    failRef.current += 1; setSyncState('error');
+                    showToast('⚠️ ' + why + ' - ข้อมูลยังเก็บไว้ในเครื่องนี้ ระบบจะลองใหม่เอง');
+                    setTimeout(handleSyncToSheet, Math.min(60000, 8000 * failRef.current));
                 }
-                setIsSyncing(false);
             };
 
-            const handleSyncFromSheet = async () => {
-                setIsSyncing(true);
+            // silent = true: ดึงเงียบๆ เมื่อไม่มีข้อมูลค้างบันทึก (ใช้ให้เครื่องที่เปิดค้างไว้ได้ข้อมูลล่าสุด)
+            const handleSyncFromSheet = async (silent) => {
+                if (silent && (savingRef.current || isDirty())) return;
+                if (!silent) setIsSyncing(true);
                 try {
-                    const response = await fetch(SHEET_API_URL);
+                    const response = await fetch(SHEET_API_URL, { cache: 'no-store' });
                     const data = await response.json();
                     if (data && data.inventory) {
-                        setInventory(data.inventory || []);
-                        setTransactions(data.transactions || []);
-                        setRepairs(data.repairs || []);
-                        setPawns(data.pawns || []);
-                        setSales(data.sales || []);
-                        showToast('ดึงข้อมูลจาก Google Sheets สำเร็จ!');
+                        const raw = { inventory: data.inventory || [], transactions: data.transactions || [], repairs: data.repairs || [], pawns: data.pawns || [], sales: data.sales || [] };
+                        const rawStr = dbStr(raw);
+                        if (silent && (savingRef.current || isDirty() || rawStr === lastSyncedRef.current)) return;
+                        lastSyncedRef.current = rawStr;
+                        let src = raw;
+                        if (!silent) {
+                            try {
+                                const d = localStorage.getItem(DRAFT_KEY);
+                                if (d && d !== rawStr && window.confirm('พบข้อมูลที่ยังไม่ได้บันทึกขึ้น Google Sheets จากครั้งก่อนในเครื่องนี้ (เช่น รูปสินค้าที่เพิ่งใส่)\n\nตกลง = กู้คืนและบันทึกขึ้น Sheets\nยกเลิก = ใช้ข้อมูลจาก Sheets')) {
+                                    const dd = JSON.parse(d);
+                                    src = { inventory: dd.inventory || [], transactions: dd.transactions || [], repairs: dd.repairs || [], pawns: dd.pawns || [], sales: dd.sales || [] };
+                                } else if (d) { localStorage.removeItem(DRAFT_KEY); }
+                            } catch (e) {}
+                        }
+                        setInventory(dedupeIds(src.inventory));
+                        setTransactions(src.transactions);
+                        setRepairs(src.repairs);
+                        setPawns(src.pawns);
+                        setSales(src.sales);
+                        if (!silent) showToast('ดึงข้อมูลจาก Google Sheets สำเร็จ!');
                         setDataLoaded(true);
                     } else if (data && Object.keys(data).length === 0) {
-                        showToast('ชีตยังว่างเปล่า เริ่มต้นใช้งานระบบใหม่');
+                        lastSyncedRef.current = dbStr({ inventory: [], transactions: [], repairs: [], pawns: [], sales: [] });
+                        if (!silent) showToast('ชีตยังว่างเปล่า เริ่มต้นใช้งานระบบใหม่');
                         setDataLoaded(true);
-                    } else {
+                    } else if (!silent) {
                         alert('⚠️ ข้อมูลในชีตผิดรูปแบบ ระบบจึงหยุดบันทึกอัตโนมัติเพื่อป้องกันข้อมูลเสียหาย\nโปรดแจ้งผู้ดูแลระบบก่อนใช้งานต่อ');
                     }
                 } catch (error) {
                     console.error(error);
-                    alert('⚠️ ดึงข้อมูลจาก Google Sheets ไม่สำเร็จ ระบบจึงหยุดบันทึกอัตโนมัติเพื่อป้องกันข้อมูลถูกเขียนทับ\nลองรีเฟรชหน้านี้อีกครั้ง');
+                    if (!silent) alert('⚠️ ดึงข้อมูลจาก Google Sheets ไม่สำเร็จ ระบบจึงหยุดบันทึกอัตโนมัติเพื่อป้องกันข้อมูลถูกเขียนทับ\nลองรีเฟรชหน้านี้อีกครั้ง');
                 }
-                setIsSyncing(false);
+                if (!silent) setIsSyncing(false);
             };
 
             useEffect(() => {
-                handleSyncFromSheet();
+                handleSyncFromSheet(false);
             }, []);
 
             useEffect(() => {
-                if (!dataLoaded) return;
+                if (!dataLoaded || !isDirty()) return;
+                setSyncState(s => (s === 'saving' || s === 'error') ? s : 'pending');
+                try { localStorage.setItem(DRAFT_KEY, dbStr(dbRef.current)); } catch (e) {}
                 const t = setTimeout(() => { handleSyncToSheet(); }, 1500);
                 return () => clearTimeout(t);
-            }, [inventory, transactions, repairs, pawns, sales]);
+            }, [inventory, transactions, repairs, pawns, sales, dataLoaded]);
+
+            useEffect(() => {
+                if (!dataLoaded) return;
+                const pull = () => { if (document.visibilityState === 'visible') handleSyncFromSheet(true); };
+                const warn = (e) => { if (isDirty()) { e.preventDefault(); e.returnValue = ''; } };
+                document.addEventListener('visibilitychange', pull);
+                window.addEventListener('beforeunload', warn);
+                const iv = setInterval(pull, 120000);
+                return () => { document.removeEventListener('visibilitychange', pull); window.removeEventListener('beforeunload', warn); clearInterval(iv); };
+            }, [dataLoaded]);
 
             useEffect(() => {
                 const handleAfterPrint = () => setPrintConfig(null);
@@ -1991,7 +2048,7 @@
             
             const addTransaction = (type, detail, amount = 0, qty = '-', ref = '', note = '', profit = null) => {
                 setTransactions(prev => [{ 
-                    id: Date.now(), 
+                    id: nextTs(), 
                     date: new Date().toLocaleString('th-TH'), 
                     rawDate: new Date().toISOString(),
                     type, 
@@ -2222,6 +2279,7 @@
                                     <div className="w-8 h-8 bg-slate-800 rounded-full flex items-center justify-center mr-3"><i className="fas fa-user"></i></div>
                                     <div><p className="font-bold capitalize text-white">{userName || userRole}</p><p className="text-xs opacity-70">ออนไลน์</p></div>
                                 </div>
+                                <button onClick={() => { if (syncState !== 'saving') handleSyncToSheet(); }} className={`w-full flex items-center px-3 py-2 mb-2 rounded-xl text-xs font-bold ${syncState === 'saved' ? 'bg-emerald-500/10 text-emerald-300' : syncState === 'error' ? 'bg-red-500/20 text-red-300' : 'bg-amber-500/10 text-amber-300'}`}><i className={`fas ${syncState === 'saved' ? 'fa-cloud-arrow-up' : syncState === 'error' ? 'fa-triangle-exclamation' : 'fa-spinner fa-spin'} mr-2`}></i>{syncState === 'saved' ? 'บันทึกลง Sheets แล้ว' : syncState === 'saving' ? 'กำลังบันทึก...' : syncState === 'error' ? 'บันทึกไม่สำเร็จ - แตะเพื่อลองใหม่' : 'รอบันทึก...'}</button>
                                 <button onClick={() => {setAuthState('login'); setUserRole(''); setUserName('');}} className="w-full flex items-center px-4 py-2.5 text-red-400 hover:bg-red-500/10 rounded-xl transition text-sm font-medium">
                                     <i className="fas fa-sign-out-alt mr-3"></i> ออกจากระบบ
                                 </button>
