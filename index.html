@@ -1795,7 +1795,10 @@
                 { key: 'อุปกรณ์เสริม', icon: 'fa-headphones', match: c => c === 'อุปกรณ์เสริม' },
                 { key: 'เครื่อง', icon: 'fa-mobile-alt', match: c => c === 'เครื่องใหม่' || c === 'เครื่องมือ2' }
             ];
-            const shown = inventory.filter(i => cats.find(c => c.key === cat).match(i.category));
+            // เครื่องมือ1 / เครื่องมือ2 มีชิ้นเดียว: ถ้าขายแล้ว (คงเหลือ <= 0) ไม่ต้องแสดงใน POS
+            const isSoldOutDevice = i => (i.category === 'เครื่องใหม่' || i.category === 'เครื่องมือ2') && Number(i.qty) <= 0;
+            const posInventory = inventory.filter(i => !isSoldOutDevice(i));
+            const shown = posInventory.filter(i => cats.find(c => c.key === cat).match(i.category));
             const [cart, setCart] = useState([]);
             const [galleryItem, setGalleryItem] = useState(null);
 
@@ -1858,7 +1861,7 @@
                         <div className="flex flex-wrap gap-2">
                             {cats.map(c => (
                                 <button key={c.key} onClick={() => setCat(c.key)} className={`px-4 py-2.5 rounded-xl font-bold text-sm border transition ${cat === c.key ? 'bg-blue-600 text-white border-blue-600 shadow-sm' : 'bg-white text-gray-600 hover:bg-blue-50'}`}>
-                                    <i className={`fas ${c.icon} mr-2`}></i>{c.key} ({inventory.filter(i => c.match(i.category)).length})
+                                    <i className={`fas ${c.icon} mr-2`}></i>{c.key} ({posInventory.filter(i => c.match(i.category)).length})
                                 </button>
                             ))}
                         </div>
