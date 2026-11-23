@@ -52,18 +52,12 @@
 
         /* Animation เคลื่อนไหวในการเปลี่ยนหน้า */
         .page-fade-in {
-            animation: fadeInSlide 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+            animation: fadeInSlide 0.3s ease-out;
         }
 
         @keyframes fadeInSlide {
-            from {
-                opacity: 0;
-                transform: translateY(12px);
-            }
-            to {
-                opacity: 1;
-                transform: none; /* ห้ามค้าง translate/scale ไว้ ไม่งั้นป๊อปอัป (fixed) จะไม่อยู่กลางหน้าจอ */
-            }
+            from { opacity: 0; }
+            to { opacity: 1; }
         }
 
         /* Modal scale transition */
@@ -101,6 +95,9 @@
         const dedupeIds = (arr) => { const seen = new Set(); return arr.map(r => { if (!r) return r; if (seen.has(r.id)) return { ...r, id: uid('INV') }; seen.add(r.id); return r; }); };
 
         // ===== ตัวช่วยสมุดบัญชี =====
+        // ป๊อปอัปทั้งหมดเรนเดอร์ที่ body เพื่อให้อยู่กลางหน้าจอจริง (ไม่ขึ้นกับความยาวของหน้า/การเลื่อน)
+        const Portal = ({ children }) => ReactDOM.createPortal(children, document.body);
+
         const TH_MONTHS = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
 
         // รายชื่อรุ่นเครื่องตามแบรนด์ แยกกลุ่มตามซีรีส์ (ใช้ร่วมกันทั้งหน้าสต็อกสินค้าและหน้ารับจำนำ) - เลือก "อื่นๆ" เพื่อพิมพ์รุ่นเองได้เสมอ
@@ -395,6 +392,7 @@
             const [idx, setIdx] = useState(0);
             const go = (d) => setIdx(i => (i + d + imgs.length) % imgs.length);
             return (
+                <Portal>
                 <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4" onClick={onClose}>
                     <div onClick={e => e.stopPropagation()} className="bg-white rounded-2xl w-full max-w-lg max-h-[92vh] overflow-auto modal-enter">
                         <div className="flex justify-between items-center p-4 border-b">
@@ -426,6 +424,7 @@
                         </div>
                     </div>
                 </div>
+                </Portal>
             );
         };
 
@@ -850,6 +849,16 @@
             const [viewCat, setViewCat] = useState('all');
             const [imgBusy, setImgBusy] = useState(false);
             const [galleryItem, setGalleryItem] = useState(null);
+            // ดูสต็อกตามวัน: กดเลือกวัน แล้วแสดงสินค้าที่เพิ่มเข้าสต็อกทั้งหมดของวันนั้น
+            const [dayView, setDayView] = useState(null); // null = ปิด, '' = เปิดแต่ยังไม่เลือกวัน, 'YYYY-MM-DD'
+            const itemDay = (i) => i.addedAt ? dayKey(i.addedAt) : '';
+            const dayGroups = useMemo(() => {
+                const m = {};
+                inventory.forEach(i => { const k = itemDay(i); m[k] = (m[k] || 0) + 1; });
+                return Object.keys(m).sort((a, b) => (a === '' ? 1 : b === '' ? -1 : b.localeCompare(a))).map(k => ({ day: k, count: m[k] }));
+            }, [inventory]);
+            const fmtDay = (k) => { if (!k) return 'ไม่ระบุวันที่ (สินค้าเดิม)'; const [y, m, d] = k.split('-').map(Number); return `${d} ${TH_MONTHS[m - 1]} ${y + 543}`; };
+            const dayItems = dayView === null ? [] : inventory.filter(i => itemDay(i) === dayView);
             const visibleItems = viewCat === 'all' ? inventory : inventory.filter(i => i.category === viewCat);
             const adjustQty = (id, d) => setInventory(prev => prev.map(i => i.id === id ? { ...i, qty: Math.max(0, i.qty + d) } : i));
 
@@ -890,6 +899,7 @@
                 const qty = parseInt(formData.qty) || 0;
                 const newItem = {
                     id: uid('INV'),
+                    addedAt: new Date().toISOString(),
                     sku: formData.sku, 
                     name: formData.name, 
                     category: formData.category,
@@ -914,10 +924,15 @@
                 <div className="space-y-6 page-fade-in">
                     <div className="flex justify-between items-end">
                         <h2 className="text-2xl font-bold text-gray-800">จัดการสต็อกสินค้า</h2>
+                        <div className="flex gap-2">
+                        <button onClick={() => setDayView(dayKey(new Date()))} className="px-4 py-2.5 rounded-xl font-bold text-sm shadow-sm transition bg-blue-600 text-white hover:bg-blue-700">
+                            <i className="fas fa-calendar-day mr-2"></i>ดูสต็อกตามวัน
+                        </button>
                         <button onClick={() => setShowOrderPanel(true)} className={`relative px-4 py-2.5 rounded-xl font-bold text-sm shadow-sm transition ${orderList.length > 0 ? 'bg-orange-500 text-white hover:bg-orange-600' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>
                             <i className="fas fa-cart-plus mr-2"></i>รายการสั่งของ
                             {orderList.length > 0 && <span className="absolute -top-2 -right-2 bg-red-600 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center">{orderList.length}</span>}
                         </button>
+                        </div>
                     </div>
 
                     <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
@@ -1033,6 +1048,7 @@
                         </div>
                     </div>
                 {showOrderPanel && (
+                        <Portal>
                         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowOrderPanel(false)}>
                             <div onClick={e => e.stopPropagation()} className="bg-white rounded-2xl p-6 w-full max-w-2xl max-h-[90vh] overflow-auto space-y-4 modal-enter">
                                 <div className="flex justify-between items-center">
@@ -1066,9 +1082,11 @@
                                 </div>
                             </div>
                         </div>
+                        </Portal>
                     )}
 
                 {edit && (
+                        <Portal>
                         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setEdit(null)}>
                             <form onSubmit={saveEdit} onClick={e => e.stopPropagation()} className="bg-white rounded-2xl p-6 w-full max-w-xl max-h-[90vh] overflow-auto space-y-4 modal-enter">
                                 <h3 className="text-lg font-bold text-gray-800">แก้ไขสินค้า</h3>
@@ -1097,7 +1115,55 @@
                                 </div>
                             </form>
                         </div>
+                        </Portal>
                     )}
+
+                {dayView !== null && (
+                    <Portal>
+                        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setDayView(null)}>
+                            <div onClick={e => e.stopPropagation()} className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[88vh] overflow-y-auto p-5 space-y-4 modal-enter">
+                                <div className="flex justify-between items-center">
+                                    <h3 className="text-lg font-bold text-gray-800"><i className="fas fa-calendar-day text-blue-600 mr-2"></i>สต็อกที่เพิ่มเข้าตามวัน</h3>
+                                    <button onClick={() => setDayView(null)} className="text-gray-400 hover:text-gray-600"><i className="fas fa-times text-lg"></i></button>
+                                </div>
+                                <div>
+                                    <label className="text-xs text-gray-500">เลือกวันที่</label>
+                                    <input type="date" value={dayView} onChange={e => setDayView(e.target.value)} className="w-full border p-2.5 rounded-xl text-sm" />
+                                </div>
+                                {dayGroups.length > 0 && (
+                                    <div className="flex gap-2 overflow-x-auto pb-1">
+                                        {dayGroups.map(g => (
+                                            <button key={g.day || 'none'} type="button" onClick={() => setDayView(g.day)} className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold border transition ${dayView === g.day ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 hover:bg-blue-50'}`}>
+                                                {fmtDay(g.day)} ({g.count})
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                                <div className="font-bold text-gray-700 text-sm flex justify-between">
+                                    <span>{dayView ? fmtDay(dayView) : 'สินค้าที่ไม่มีวันที่บันทึก'} — {dayItems.length} รายการ</span>
+                                    {userRole === 'admin' && dayItems.length > 0 && <span>มูลค่าทุนรวม ฿{dayItems.reduce((a, i) => a + (Number(i.cost) || 0) * (Number(i.qty) || 0), 0).toLocaleString()}</span>}
+                                </div>
+                                {dayItems.length === 0 && <p className="text-center text-gray-400 py-8">ไม่มีสินค้าที่เพิ่มในวันนี้</p>}
+                                <div className="space-y-2">
+                                    {dayItems.map(item => (
+                                        <div key={item.id} className="p-3 rounded-xl bg-slate-50 border border-gray-200 text-sm flex gap-3 items-center">
+                                            <SafeImg src={getItemImages(item)[0]} alt={item.name} className="w-12 h-12 shrink-0 object-cover rounded-lg border" />
+                                            <div className="flex-1 min-w-0">
+                                                <div className="font-bold text-gray-800 truncate">{item.name}</div>
+                                                <div className="text-xs text-gray-500">{item.sku} · {catInfo(item.category).label}{item.addedAt ? ` · ${new Date(item.addedAt).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.` : ''}</div>
+                                            </div>
+                                            <div className="text-right text-xs shrink-0">
+                                                <div>คงเหลือ <b>{item.qty}</b></div>
+                                                {userRole === 'admin' && <div className="text-gray-500">ทุน ฿{(Number(item.cost) || 0).toLocaleString()}</div>}
+                                                <div className="font-bold text-blue-600">ขาย ฿{(Number(item.price) || 0).toLocaleString()}</div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    </Portal>
+                )}
 
                 {galleryItem && <ImageGallery item={galleryItem} onClose={() => setGalleryItem(null)} />}
                 </div>
@@ -1447,6 +1513,7 @@
                     </div>
 
                     {editTarget && (
+                        <Portal>
                         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => setEditTarget(null)}>
                             <form onSubmit={saveEdit} className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6 space-y-4" onClick={e => e.stopPropagation()}>
                                 <h3 className="text-lg font-bold text-gray-800"><i className="fas fa-edit text-blue-600 mr-2"></i>แก้ไขรายการจำนำ <span className="font-mono text-purple-600">{editTarget.id}</span></h3>
@@ -1468,9 +1535,11 @@
                                 </div>
                             </form>
                         </div>
+                        </Portal>
                     )}
 
                     {renewTarget && (
+                        <Portal>
                         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => setRenewTarget(null)}>
                             <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4" onClick={e => e.stopPropagation()}>
                                 <h3 className="text-lg font-bold text-gray-800"><i className="fas fa-sync-alt text-purple-600 mr-2"></i>ต่อดอก {renewTarget.id}</h3>
@@ -1492,6 +1561,7 @@
                                 </div>
                             </div>
                         </div>
+                        </Portal>
                     )}
                 </div>
             );
