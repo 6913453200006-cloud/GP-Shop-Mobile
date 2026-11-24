@@ -52,33 +52,19 @@
 
         /* Animation เคลื่อนไหวในการเปลี่ยนหน้า */
         .page-fade-in {
-            animation: fadeInSlide 0.3s ease-out;
+            animation: fadeInSlide 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
         }
 
         @keyframes fadeInSlide {
-            from { opacity: 0; }
-            to { opacity: 1; }
+            from {
+                opacity: 0;
+                transform: translateY(12px);
+            }
+            to {
+                opacity: 1;
+                transform: none; /* ห้ามค้าง translate/scale ไว้ ไม่งั้นป๊อปอัป (fixed) จะไม่อยู่กลางหน้าจอ */
+            }
         }
-
-
-        /* ===== สมุดบัญชีรายรับ-รายจ่าย (หน้าตาแบบสมุดบัญชี) ===== */
-        .ledger-book { background:#fffef7; border:2px solid #1e3a5f; border-radius:14px; overflow:hidden; box-shadow:0 4px 14px rgba(30,58,95,.12); }
-        .ledger-cover { background:linear-gradient(90deg,#1e3a5f,#274b78); color:#fff; padding:.8rem 1.1rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:.5rem; }
-        .ledger-table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }
-        .ledger-table th { background:#eaf0f8; color:#1e3a5f; font-weight:700; font-size:.8rem; padding:.7rem .75rem; border:1px solid #b8c7dc; border-bottom:3px double #1e3a5f; text-align:center; white-space:nowrap; }
-        .ledger-table td { padding:.6rem .75rem; border-bottom:1px solid #c9d8ec; border-right:1px solid #eadfc2; font-size:.875rem; vertical-align:middle; }
-        .ledger-table th:last-child, .ledger-table td:last-child { border-right:none; }
-        .ledger-table .num { text-align:right; white-space:nowrap; font-weight:600; }
-        .ledger-table .money-start { border-left:3px double #b91c1c; }
-        .ledger-table .t-inc { color:#15803d; }
-        .ledger-table .t-exp { color:#b91c1c; }
-        .ledger-table .t-prof { color:#7e22ce; }
-        .ledger-table .t-neg { color:#b91c1c; }
-        .ledger-table .t-bal { background:#f6f9fd; }
-        .ledger-row:hover td { background:#fff6d6; }
-        .ledger-day td { background:#e8eef7; border-top:2px solid #1e3a5f; border-bottom:1px solid #9fb3cf; font-weight:700; color:#1e3a5f; }
-        .ledger-bf td { background:#f3f6fa; font-style:italic; color:#475569; }
-        .ledger-sum td { background:#fff4cf; border-top:2px solid #1e3a5f; border-bottom:4px double #1e3a5f; font-weight:800; color:#1e3a5f; }
 
         /* Modal scale transition */
         .modal-enter {
@@ -112,12 +98,35 @@
         let _lastTs = 0;
         const nextTs = () => { const n = Date.now(); _lastTs = n > _lastTs ? n : _lastTs + 1; return _lastTs; };
         const uid = (p) => `${p}${nextTs().toString(36).toUpperCase()}${Math.floor(Math.random() * 36).toString(36).toUpperCase()}`;
+        // รันเลขต่อเนื่อง: หาเลขสูงสุดที่มีอยู่แล้วบวก 1 (ไม่เริ่มต่ำกว่าค่าเริ่มต้น)
+        // ระบบจำนำ: GP100101, GP100102, ...
+        const nextPawnId = (pawns) => { let max = 100100; (pawns || []).forEach(p => { const m = /^GP(\d+)$/.exec(String(p.id)); if (m) max = Math.max(max, Number(m[1])); }); return 'GP' + (max + 1); };
+        // สต็อกเครื่องมือ2: 10010101, 10010102, ... (นับรวมรหัสที่เคยขายไปแล้วด้วย เพราะขายแล้วรายการถูกลบ จะได้ไม่ใช้เลขซ้ำ)
+        const nextPhone2Sku = (inventory, sales) => { let max = 10010100; const chk = (v) => { v = String(v || ''); if (/^1001\d{4}$/.test(v)) max = Math.max(max, Number(v)); }; (inventory || []).forEach(i => chk(i.sku)); (sales || []).forEach(sl => (sl.items || []).forEach(it => chk(it.sku))); return String(max + 1); };
+        // เครื่องมือ1/เครื่องมือ2 มีชิ้นเดียว: ขายหมด (qty 0) = ลบรายการ + ลบรูปออกทั้งหมด
+        const isPhoneCat = (c) => c === 'เครื่องใหม่' || c === 'เครื่องมือ2';
+        const deleteDriveImages = (items) => {
+            try {
+                const ids = [];
+                items.forEach(it => getItemImages(it).forEach(u => { const id = driveId(u); if (id && !ids.includes(id)) ids.push(id); }));
+                if (!ids.length) return;
+                fetch(SHEET_API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'deleteImages', ids }) }).catch(() => {});
+            } catch (e) {}
+        };
+        // สรุปประวัติรายการจำนำ (ใช้ทั้งหน้าประวัติและใบเสร็จ)
+        const pawnSummary = (p) => {
+            const todayStr = dayKey(new Date());
+            const log = p.renewLog || [];
+            const active = ['อยู่ในระหว่างจำนำ', 'อยู่ในระหว่างหลุดจำนำ'].includes(p.status);
+            const curLate = (active && p.dueDate && p.dueDate < todayStr) ? Math.round((new Date(todayStr) - new Date(p.dueDate)) / 86400000) : 0;
+            const principal = Number(p.principal) || 0;
+            const interest = Number(p.interest) || principal * 0.1;
+            return { log, curLate, lateTimes: log.filter(x => x.lateDays > 0).length + (curLate > 0 ? 1 : 0), lateDays: log.reduce((s, x) => s + (x.lateDays || 0), 0) + curLate,
+                     renewCount: p.renewCount || 0, renewTotal: Number(p.renewTotal) || 0, principal, interest, redeem: principal + interest };
+        };
         const dedupeIds = (arr) => { const seen = new Set(); return arr.map(r => { if (!r) return r; if (seen.has(r.id)) return { ...r, id: uid('INV') }; seen.add(r.id); return r; }); };
 
         // ===== ตัวช่วยสมุดบัญชี =====
-        // ป๊อปอัปทั้งหมดเรนเดอร์ที่ body เพื่อให้อยู่กลางหน้าจอจริง (ไม่ขึ้นกับความยาวของหน้า/การเลื่อน)
-        const Portal = ({ children }) => ReactDOM.createPortal(children, document.body);
-
         const TH_MONTHS = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
 
         // รายชื่อรุ่นเครื่องตามแบรนด์ แยกกลุ่มตามซีรีส์ (ใช้ร่วมกันทั้งหน้าสต็อกสินค้าและหน้ารับจำนำ) - เลือก "อื่นๆ" เพื่อพิมพ์รุ่นเองได้เสมอ
@@ -412,7 +421,6 @@
             const [idx, setIdx] = useState(0);
             const go = (d) => setIdx(i => (i + d + imgs.length) % imgs.length);
             return (
-                <Portal>
                 <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4" onClick={onClose}>
                     <div onClick={e => e.stopPropagation()} className="bg-white rounded-2xl w-full max-w-lg max-h-[92vh] overflow-auto modal-enter">
                         <div className="flex justify-between items-center p-4 border-b">
@@ -444,7 +452,6 @@
                         </div>
                     </div>
                 </div>
-                </Portal>
             );
         };
 
@@ -848,7 +855,7 @@
         };
 
         // --- 3.2 สต็อกสินค้า (Inventory) ---
-        const InventoryTab = ({ inventory, setInventory, userRole, addTransaction, showToast, onPrint }) => {
+        const InventoryTab = ({ inventory, setInventory, userRole, addTransaction, showToast, onPrint, sales }) => {
             const [formData, setFormData] = useState({ 
                 sku: '', 
                 name: '', 
@@ -869,16 +876,6 @@
             const [viewCat, setViewCat] = useState('all');
             const [imgBusy, setImgBusy] = useState(false);
             const [galleryItem, setGalleryItem] = useState(null);
-            // ดูสต็อกตามวัน: กดเลือกวัน แล้วแสดงสินค้าที่เพิ่มเข้าสต็อกทั้งหมดของวันนั้น
-            const [dayView, setDayView] = useState(null); // null = ปิด, '' = เปิดแต่ยังไม่เลือกวัน, 'YYYY-MM-DD'
-            const itemDay = (i) => i.addedAt ? dayKey(i.addedAt) : '';
-            const dayGroups = useMemo(() => {
-                const m = {};
-                inventory.forEach(i => { const k = itemDay(i); m[k] = (m[k] || 0) + 1; });
-                return Object.keys(m).sort((a, b) => (a === '' ? 1 : b === '' ? -1 : b.localeCompare(a))).map(k => ({ day: k, count: m[k] }));
-            }, [inventory]);
-            const fmtDay = (k) => { if (!k) return 'ไม่ระบุวันที่ (สินค้าเดิม)'; const [y, m, d] = k.split('-').map(Number); return `${d} ${TH_MONTHS[m - 1]} ${y + 543}`; };
-            const dayItems = dayView === null ? [] : inventory.filter(i => itemDay(i) === dayView);
             const visibleItems = viewCat === 'all' ? inventory : inventory.filter(i => i.category === viewCat);
             const adjustQty = (id, d) => setInventory(prev => prev.map(i => i.id === id ? { ...i, qty: Math.max(0, i.qty + d) } : i));
 
@@ -916,10 +913,9 @@
             const handleSubmit = (e) => {
                 e.preventDefault();
                 const cost = parseFloat(formData.cost) || 0;
-                const qty = parseInt(formData.qty) || 0;
+                const qty = parseInt(formData.qty) || (isPhoneCategory ? 1 : 0);
                 const newItem = {
                     id: uid('INV'),
-                    addedAt: new Date().toISOString(),
                     sku: formData.sku, 
                     name: formData.name, 
                     category: formData.category,
@@ -932,7 +928,7 @@
                     ...packImages(formData.images)
                 };
                 setInventory([...inventory, newItem]);
-                addTransaction('รายจ่าย', `ซื้อสินค้าเข้าสต็อก: ${newItem.name}`, cost * qty, qty, newItem.id);
+                addTransaction('รายจ่าย', `ซื้อสินค้าเข้าสต็อก: ${newItem.name}`, cost * qty, qty, newItem.id, '', null, newItem.sku || '');
                 setFormData({ 
                     sku: '', name: '', category: 'อะไหล่', cost: '', price: '', qty: '', 
                     battery: '', capacity: '', color: '', images: padImages([]), brand: '', model: '' 
@@ -944,15 +940,10 @@
                 <div className="space-y-6 page-fade-in">
                     <div className="flex justify-between items-end">
                         <h2 className="text-2xl font-bold text-gray-800">จัดการสต็อกสินค้า</h2>
-                        <div className="flex gap-2">
-                        <button onClick={() => setDayView(dayKey(new Date()))} className="px-4 py-2.5 rounded-xl font-bold text-sm shadow-sm transition bg-blue-600 text-white hover:bg-blue-700">
-                            <i className="fas fa-calendar-day mr-2"></i>ดูสต็อกตามวัน
-                        </button>
                         <button onClick={() => setShowOrderPanel(true)} className={`relative px-4 py-2.5 rounded-xl font-bold text-sm shadow-sm transition ${orderList.length > 0 ? 'bg-orange-500 text-white hover:bg-orange-600' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>
                             <i className="fas fa-cart-plus mr-2"></i>รายการสั่งของ
                             {orderList.length > 0 && <span className="absolute -top-2 -right-2 bg-red-600 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center">{orderList.length}</span>}
                         </button>
-                        </div>
                     </div>
 
                     <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
@@ -969,7 +960,7 @@
                                 )}
                                 <div>
                                     <label className="text-xs text-gray-500">หมวดหมู่</label>
-                                    <select value={formData.category} onChange={e => setFormData({...formData, category: e.target.value, name: '', brand: '', model: ''})} className="w-full border p-2.5 rounded-xl text-sm">
+                                    <select value={formData.category} onChange={e => { const c = e.target.value; const auto = /^1001\d{4}$/.test(formData.sku); setFormData({...formData, category: c, name: '', brand: '', model: '', sku: c === 'เครื่องมือ2' ? ((formData.sku === '' || auto) ? nextPhone2Sku(inventory, sales) : formData.sku) : (auto ? '' : formData.sku)}); }} className="w-full border p-2.5 rounded-xl text-sm">
                                         {INV_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.full}</option>)}
                                     </select>
                                 </div>
@@ -1068,7 +1059,6 @@
                         </div>
                     </div>
                 {showOrderPanel && (
-                        <Portal>
                         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowOrderPanel(false)}>
                             <div onClick={e => e.stopPropagation()} className="bg-white rounded-2xl p-6 w-full max-w-2xl max-h-[90vh] overflow-auto space-y-4 modal-enter">
                                 <div className="flex justify-between items-center">
@@ -1102,11 +1092,9 @@
                                 </div>
                             </div>
                         </div>
-                        </Portal>
                     )}
 
                 {edit && (
-                        <Portal>
                         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setEdit(null)}>
                             <form onSubmit={saveEdit} onClick={e => e.stopPropagation()} className="bg-white rounded-2xl p-6 w-full max-w-xl max-h-[90vh] overflow-auto space-y-4 modal-enter">
                                 <h3 className="text-lg font-bold text-gray-800">แก้ไขสินค้า</h3>
@@ -1135,55 +1123,7 @@
                                 </div>
                             </form>
                         </div>
-                        </Portal>
                     )}
-
-                {dayView !== null && (
-                    <Portal>
-                        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setDayView(null)}>
-                            <div onClick={e => e.stopPropagation()} className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[88vh] overflow-y-auto p-5 space-y-4 modal-enter">
-                                <div className="flex justify-between items-center">
-                                    <h3 className="text-lg font-bold text-gray-800"><i className="fas fa-calendar-day text-blue-600 mr-2"></i>สต็อกที่เพิ่มเข้าตามวัน</h3>
-                                    <button onClick={() => setDayView(null)} className="text-gray-400 hover:text-gray-600"><i className="fas fa-times text-lg"></i></button>
-                                </div>
-                                <div>
-                                    <label className="text-xs text-gray-500">เลือกวันที่</label>
-                                    <input type="date" value={dayView} onChange={e => setDayView(e.target.value)} className="w-full border p-2.5 rounded-xl text-sm" />
-                                </div>
-                                {dayGroups.length > 0 && (
-                                    <div className="flex gap-2 overflow-x-auto pb-1">
-                                        {dayGroups.map(g => (
-                                            <button key={g.day || 'none'} type="button" onClick={() => setDayView(g.day)} className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold border transition ${dayView === g.day ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 hover:bg-blue-50'}`}>
-                                                {fmtDay(g.day)} ({g.count})
-                                            </button>
-                                        ))}
-                                    </div>
-                                )}
-                                <div className="font-bold text-gray-700 text-sm flex justify-between">
-                                    <span>{dayView ? fmtDay(dayView) : 'สินค้าที่ไม่มีวันที่บันทึก'} — {dayItems.length} รายการ</span>
-                                    {userRole === 'admin' && dayItems.length > 0 && <span>มูลค่าทุนรวม ฿{dayItems.reduce((a, i) => a + (Number(i.cost) || 0) * (Number(i.qty) || 0), 0).toLocaleString()}</span>}
-                                </div>
-                                {dayItems.length === 0 && <p className="text-center text-gray-400 py-8">ไม่มีสินค้าที่เพิ่มในวันนี้</p>}
-                                <div className="space-y-2">
-                                    {dayItems.map(item => (
-                                        <div key={item.id} className="p-3 rounded-xl bg-slate-50 border border-gray-200 text-sm flex gap-3 items-center">
-                                            <SafeImg src={getItemImages(item)[0]} alt={item.name} className="w-12 h-12 shrink-0 object-cover rounded-lg border" />
-                                            <div className="flex-1 min-w-0">
-                                                <div className="font-bold text-gray-800 truncate">{item.name}</div>
-                                                <div className="text-xs text-gray-500">{item.sku} · {catInfo(item.category).label}{item.addedAt ? ` · ${new Date(item.addedAt).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.` : ''}</div>
-                                            </div>
-                                            <div className="text-right text-xs shrink-0">
-                                                <div>คงเหลือ <b>{item.qty}</b></div>
-                                                {userRole === 'admin' && <div className="text-gray-500">ทุน ฿{(Number(item.cost) || 0).toLocaleString()}</div>}
-                                                <div className="font-bold text-blue-600">ขาย ฿{(Number(item.price) || 0).toLocaleString()}</div>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        </div>
-                    </Portal>
-                )}
 
                 {galleryItem && <ImageGallery item={galleryItem} onClose={() => setGalleryItem(null)} />}
                 </div>
@@ -1295,7 +1235,7 @@
         };
 
         // --- 3.4 รับจำนำ (Pawn) ---
-        const PawnTab = ({ pawns, setPawns, setTransactions, showToast, addTransaction }) => {
+        const PawnTab = ({ pawns, setPawns, setTransactions, showToast, addTransaction, onPrint }) => {
             const [formData, setFormData] = useState({ name: '', phone: '', idCard: '', model: '', imei: '', principal: '', startDate: '', dueDate: '', brand: '', modelSel: '' });
 
             const syncToCalendar = async (pawnData) => {
@@ -1320,7 +1260,7 @@
                 e.preventDefault();
                 const principal = parseFloat(formData.principal);
                 const newPawn = {
-                    id: uid('PWN'),
+                    id: nextPawnId(pawns),
                     ...formData,
                     principal,
                     interest: principal * 0.10,
@@ -1338,24 +1278,27 @@
 
             // --- ต่อดอก: เก็บดอกเบี้ย 10% ของยอดจำนำเป็นกำไร และเลื่อนวันครบกำหนด ---
             const [renewTarget, setRenewTarget] = useState(null);
+            const [historyTarget, setHistoryTarget] = useState(null);
             const [renewDate, setRenewDate] = useState('');
             const addDaysYmd = (ymd, n) => {
                 const base = ymd && !isNaN(new Date(ymd)) ? new Date(ymd + 'T00:00:00') : new Date();
                 base.setDate(base.getDate() + n);
                 return dayKey(base);
             };
-            const openRenew = (p) => { setRenewTarget(p); setRenewDate(addDaysYmd(p.dueDate, 30)); };
+            const openRenew = (p) => { setRenewTarget(p); setRenewDate(addDaysYmd(p.dueDate, 10)); };
             const confirmRenew = () => {
                 const p = renewTarget;
                 if (!p || !renewDate) { showToast('กรุณาเลือกวันครบกำหนดใหม่'); return; }
                 const profit = (p.principal || 0) * 0.10;
+                const lateNow = p.dueDate ? Math.max(0, Math.round((new Date(dayKey(new Date())) - new Date(p.dueDate)) / 86400000)) : 0;
                 const updated = {
                     ...p,
                     dueDate: renewDate,
                     status: 'อยู่ในระหว่างจำนำ',
                     renewCount: (p.renewCount || 0) + 1,
                     renewTotal: (p.renewTotal || 0) + profit,
-                    lastRenewDate: dayKey(new Date())
+                    lastRenewDate: dayKey(new Date()),
+                    renewLog: [...(p.renewLog || []), { date: dayKey(new Date()), amount: profit, fromDue: p.dueDate || '', toDue: renewDate, lateDays: lateNow }]
                 };
                 setPawns(pawns.map(x => x.id === p.id ? updated : x));
                 addTransaction('รายรับ', `ต่อดอกจำนำ: ${p.model}`, profit, 1, p.id, `ต่อดอกครั้งที่ ${updated.renewCount} (10% ของ ฿${(p.principal || 0).toLocaleString()}) เลื่อนครบกำหนด ${p.dueDate || '-'} → ${renewDate}`);
@@ -1457,7 +1400,7 @@
                     </div>
 
                     <div className="flex flex-wrap items-center gap-4 text-xs text-gray-600 px-1">
-                        <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded bg-yellow-300"></span>แถวสีเหลือง = เกินกำหนดจำนำ</span>
+                        <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded bg-yellow-300"></span>แถวสีเหลือง = ถึงวันครบกำหนด / เกินกำหนดจำนำ</span>
                         <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded bg-red-500"></span>แถวสีแดง = หลุดจำนำ / หยุดจำนำ</span>
                     </div>
                     {/* ตารางแสดงข้อมูลจำนำครบถ้วนทุกรายละเอียด */}
@@ -1482,12 +1425,14 @@
                                     const todayStr = dayKey(new Date());
                                     const isOverdue = ACTIVE_STATUS.includes(p.status) && ((p.dueDate && p.dueDate < todayStr) || p.status === 'อยู่ในระหว่างหลุดจำนำ');
                                     const isForfeit = p.status === 'หลุดจำนำ';
+                                    const isDueToday = ACTIVE_STATUS.includes(p.status) && p.dueDate === todayStr;
+                                    const isYellow = isOverdue || isDueToday;
                                     const overdueDays = (isOverdue && p.dueDate) ? Math.max(0, Math.round((new Date(todayStr) - new Date(p.dueDate)) / 86400000)) : 0;
-                                    const displayStatus = isOverdue ? ('เกินกำหนด' + (overdueDays > 0 ? ' ' + overdueDays + ' วัน' : '')) : p.status;
+                                    const displayStatus = isOverdue ? ('เกินกำหนด' + (overdueDays > 0 ? ' ' + overdueDays + ' วัน' : '')) : (isDueToday ? 'ครบกำหนดวันนี้' : p.status);
                                     
                                     return (
-                                    <tr key={p.id} className={`border-b text-sm transition ${isForfeit ? 'bg-red-50 hover:bg-red-100' : isOverdue ? 'bg-yellow-50 hover:bg-yellow-100' : 'hover:bg-gray-50'}`}>
-                                        <td className={`p-4 font-mono font-bold text-purple-600 whitespace-nowrap border-l-4 ${isForfeit ? 'border-red-500' : isOverdue ? 'border-yellow-400' : 'border-transparent'}`}>{p.id}</td>
+                                    <tr key={p.id} className={`border-b text-sm transition ${isForfeit ? 'bg-red-50 hover:bg-red-100' : isYellow ? 'bg-yellow-100 hover:bg-yellow-200' : 'hover:bg-gray-50'}`}>
+                                        <td className={`p-4 font-mono font-bold text-purple-600 whitespace-nowrap border-l-4 ${isForfeit ? 'border-red-500' : isYellow ? 'border-yellow-400' : 'border-transparent'}`}>{p.id}</td>
                                         <td className="p-4">
                                             <div className="font-bold text-gray-800">{p.name}</div>
                                             <div className="text-xs text-gray-500">โทร: {p.phone}</div>
@@ -1504,18 +1449,19 @@
                                         </td>
                                         <td className="p-4 text-center text-xs whitespace-nowrap">
                                             <div className="text-gray-500">เริ่ม: {p.startDate || '-'}</div>
-                                            <div className={`font-bold mt-1 ${isForfeit ? 'text-red-600' : isOverdue ? 'text-yellow-700' : 'text-gray-800'}`}>
+                                            <div className={`font-bold mt-1 ${isForfeit ? 'text-red-600' : isYellow ? 'text-yellow-700' : 'text-gray-800'}`}>
                                                 {ACTIVE_STATUS.includes(p.status)
                                                     ? <input key={p.id + p.dueDate} type="date" defaultValue={p.dueDate} title="เปลี่ยนวันครบกำหนด (ปฏิทินจะอัปเดตตาม)" onBlur={e => { if (e.target.value && e.target.value !== p.dueDate) handleExtendDueDate(p.id, e.target.value); }} className={`border rounded p-1 text-xs font-bold bg-white ${isOverdue ? 'text-yellow-700 border-yellow-400' : 'text-gray-800'}`} />
                                                     : p.dueDate}
                                             </div>
                                         </td>
                                         <td className="p-4 text-center whitespace-nowrap">
-                                            <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${isForfeit ? 'bg-red-500 text-white' : isOverdue ? 'bg-yellow-200 text-yellow-800' : p.status === 'อยู่ในระหว่างจำนำ' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
+                                            <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${isForfeit ? 'bg-red-500 text-white' : isYellow ? 'bg-yellow-300 text-yellow-900' : p.status === 'อยู่ในระหว่างจำนำ' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
                                                 {displayStatus}
                                             </span>
                                         </td>
                                         <td className="p-4 text-center whitespace-nowrap">
+                                            <button onClick={() => setHistoryTarget(p)} className="text-purple-600 hover:bg-purple-100 p-2 rounded-lg mr-1" title="ประวัติ / พิมพ์ใบเสร็จ"><i className="fas fa-receipt"></i></button>
                                             <button onClick={() => openEdit(p)} className="text-blue-600 hover:bg-blue-100 p-2 rounded-lg mr-1" title="แก้ไขรายการ"><i className="fas fa-edit"></i></button>
                                             <select className="border rounded-lg text-xs p-1.5 bg-white cursor-pointer font-medium" value={p.status} onChange={(e) => { if (e.target.value === '__renew') openRenew(p); else handleUpdateStatus(p.id, e.target.value); }}>
                                                 <option value="อยู่ในระหว่างจำนำ">อยู่ในระหว่างจำนำ</option>
@@ -1532,8 +1478,46 @@
                         </div>
                     </div>
 
+                    {historyTarget && (() => {
+                        const hp = pawns.find(x => x.id === historyTarget.id) || historyTarget;
+                        const sm = pawnSummary(hp);
+                        const baht = (n) => '฿' + (Number(n) || 0).toLocaleString();
+                        return ReactDOM.createPortal(
+                            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[70] p-4" onClick={() => setHistoryTarget(null)}>
+                                <div onClick={e => e.stopPropagation()} className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6 space-y-4 modal-enter">
+                                    <div className="flex justify-between items-center">
+                                        <h3 className="text-lg font-bold text-gray-800"><i className="fas fa-receipt text-purple-600 mr-2"></i>ประวัติรายการจำนำ <span className="font-mono text-purple-600">{hp.id}</span></h3>
+                                        <button onClick={() => setHistoryTarget(null)} className="text-gray-400 hover:text-gray-600"><i className="fas fa-times text-lg"></i></button>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+                                        <div><span className="text-gray-500">ผู้จำนำ:</span> <b>{hp.name}</b></div><div><span className="text-gray-500">โทร:</span> {hp.phone || '-'}</div>
+                                        <div><span className="text-gray-500">เครื่อง:</span> <b>{hp.model}</b></div><div><span className="text-gray-500">IMEI:</span> <span className="font-mono">{hp.imei || '-'}</span></div>
+                                        <div><span className="text-gray-500">เงินต้น:</span> <b>{baht(sm.principal)}</b></div><div><span className="text-gray-500">ดอกเบี้ย/รอบ (10%):</span> <b>{baht(sm.interest)}</b></div>
+                                        <div><span className="text-gray-500">สถานะ:</span> <b>{hp.status}</b></div><div><span className="text-gray-500">ครบกำหนดล่าสุด:</span> <b>{hp.dueDate || '-'}</b></div>
+                                    </div>
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-center text-xs">
+                                        <div className="bg-green-50 border border-green-200 rounded-xl p-2"><div className="text-gray-500">ต่อดอก</div><div className="font-bold text-green-700 text-base">{sm.renewCount} ครั้ง</div></div>
+                                        <div className="bg-purple-50 border border-purple-200 rounded-xl p-2"><div className="text-gray-500">รวมดอกเบี้ยที่รับแล้ว</div><div className="font-bold text-purple-700 text-base">{baht(sm.renewTotal)}</div></div>
+                                        <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-2"><div className="text-gray-500">เกินกำหนด</div><div className="font-bold text-yellow-700 text-base">{sm.lateTimes} ครั้ง / {sm.lateDays} วัน</div></div>
+                                        <div className="bg-blue-50 border border-blue-200 rounded-xl p-2"><div className="text-gray-500">ยอดไถ่ถอนตอนนี้</div><div className="font-bold text-blue-700 text-base">{baht(sm.redeem)}</div></div>
+                                    </div>
+                                    <div className="space-y-2 text-sm">
+                                        <div className="p-3 rounded-xl bg-gray-50 border"><b>รับจำนำ</b> วันที่ {hp.startDate || '-'} · เงินต้น {baht(sm.principal)}</div>
+                                        {sm.log.map((x, i) => (
+                                            <div key={i} className="p-3 rounded-xl bg-green-50 border border-green-200"><b>ต่อดอกครั้งที่ {i + 1}</b> วันที่ {x.date} · รับดอก {baht(x.amount)} · ครบกำหนด {x.fromDue || '-'} → {x.toDue}{x.lateDays > 0 ? <span className="text-yellow-700 font-bold"> · เกินกำหนด {x.lateDays} วัน</span> : null}</div>
+                                        ))}
+                                        {sm.renewCount > sm.log.length && <div className="p-3 rounded-xl bg-green-50 border border-green-200 text-gray-600">ต่อดอกก่อนระบบบันทึกประวัติรายครั้ง {sm.renewCount - sm.log.length} ครั้ง{hp.lastRenewDate ? ` (ล่าสุดวันที่ ${hp.lastRenewDate})` : ''}</div>}
+                                        <div className={`p-3 rounded-xl border ${sm.curLate > 0 ? 'bg-yellow-50 border-yellow-300' : 'bg-gray-50'}`}><b>สถานะตอนนี้:</b> {hp.status}{sm.curLate > 0 ? ` · เกินกำหนดแล้ว ${sm.curLate} วัน` : ''} · ครบกำหนด {hp.dueDate || '-'}</div>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <button onClick={() => onPrint('pawn', hp)} className="flex-1 bg-purple-600 text-white font-bold py-2.5 rounded-xl hover:bg-purple-700 shadow-md"><i className="fas fa-print mr-2"></i>พิมพ์ใบเสร็จ</button>
+                                        <button onClick={() => setHistoryTarget(null)} className="px-5 bg-gray-100 text-gray-700 font-bold rounded-xl hover:bg-gray-200">ปิด</button>
+                                    </div>
+                                </div>
+                            </div>, document.body);
+                    })()}
+
                     {editTarget && (
-                        <Portal>
                         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => setEditTarget(null)}>
                             <form onSubmit={saveEdit} className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6 space-y-4" onClick={e => e.stopPropagation()}>
                                 <h3 className="text-lg font-bold text-gray-800"><i className="fas fa-edit text-blue-600 mr-2"></i>แก้ไขรายการจำนำ <span className="font-mono text-purple-600">{editTarget.id}</span></h3>
@@ -1555,11 +1539,9 @@
                                 </div>
                             </form>
                         </div>
-                        </Portal>
                     )}
 
                     {renewTarget && (
-                        <Portal>
                         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => setRenewTarget(null)}>
                             <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4" onClick={e => e.stopPropagation()}>
                                 <h3 className="text-lg font-bold text-gray-800"><i className="fas fa-sync-alt text-purple-600 mr-2"></i>ต่อดอก {renewTarget.id}</h3>
@@ -1581,7 +1563,6 @@
                                 </div>
                             </div>
                         </div>
-                        </Portal>
                     )}
                 </div>
             );
@@ -1650,7 +1631,7 @@
         };
 
         // --- 3.6 สมุดบัญชีรายรับ-รายจ่าย (Ledger) ---
-        const TransactionTab = ({ transactions, setTransactions, onPrint, showToast }) => {
+        const TransactionTab = ({ transactions, setTransactions, onPrint, showToast, inventory, sales }) => {
             const now = new Date();
             const [selectedMonth, setSelectedMonth] = useState(now.getMonth());
             const [selectedYear, setSelectedYear] = useState(now.getFullYear());
@@ -1664,6 +1645,14 @@
             const inp = 'w-full border rounded-lg p-2 text-sm';
             const setDate = (ymd, base) => { const [y, m, d] = ymd.split('-').map(Number); const nd = new Date(base || new Date()); nd.setFullYear(y, m - 1, d); return nd; };
 
+            // รหัสสินค้าของรายการ: ใช้ที่บันทึกไว้ ถ้าไม่มี (รายการเก่า) ค้นจากสต็อก/บิลขาย
+            const skuOf = (r) => {
+                if (r.sku) return r.sku;
+                const it = (inventory || []).find(i => i.id === r.ref); if (it) return it.sku || '';
+                const sl = (sales || []).find(x => x.id === r.ref);
+                if (sl) { const m = (sl.items || []).find(i => r.detail && r.detail.includes(i.name)); return m ? (m.sku || '') : ''; }
+                return '';
+            };
             const ledger = buildLedger(transactions);
             const monthRows = ledger.filter(r => r._d.getMonth() === selectedMonth && r._d.getFullYear() === selectedYear);
             
@@ -1685,26 +1674,14 @@
             const monthSalesProfit = monthRows.reduce((s, r) => s + (r.profit || 0), 0); // กำไรจากรายการซื้อขายสินค้า (ราคาขาย-ต้นทุน) เดือนนี้
             const todayIncome = ledger.filter(r => dayKey(r._d) === dayKey(now)).reduce((s, r) => s + r.inc, 0);
 
-            // แสดงรายการล่าสุดไว้บนสุด (ยอดคงเหลือคำนวณตามลำดับเวลาจริงมาแล้วใน buildLedger จึงยังถูกต้อง)
-            const showBal = ledgerTab === 'all'; // ยอดคงเหลือสะสมแสดงเฉพาะแท็บ "รวมทุกรายการ" เพื่อไม่ให้สับสนตอนกรอง
-            const NC = showBal ? 9 : 8;
-            const monthStart = new Date(selectedYear, selectedMonth, 1);
-            const beforeRows = ledger.filter(r => r._d < monthStart);
-            const openingBal = beforeRows.length ? beforeRows[beforeRows.length - 1].bal : 0; // ยอดยกมา
-            const closingBal = monthRows.length ? monthRows[monthRows.length - 1].bal : openingBal; // ยอดยกไป
-            const fInc = filteredRows.reduce((a, r) => a + r.inc, 0);
-            const fExp = filteredRows.reduce((a, r) => a + r.exp, 0);
-            const fProfit = filteredRows.reduce((a, r) => a + (r.profit || 0), 0);
-            const money = (n) => (Number(n) || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-            const balText = (n) => (n < 0 ? `(${money(Math.abs(n))})` : money(n));
-
             const days = [];
-            [...filteredRows].reverse().forEach(r => {
+            filteredRows.forEach(r => {
                 const k = dayKey(r._d);
                 let g = days[days.length - 1];
                 if (!g || g.k !== k) { g = { k, d: r._d, items: [] }; days.push(g); }
                 g.items.push(r);
             });
+            days.reverse(); days.forEach(g => g.items.reverse()); // รายการล่าสุดอยู่บนสุด (วันล่าสุด -> เก่า)
 
             const startEdit = (r) => { setEditIdx(r._i); setDraft({ date: dayKey(r._d), detail: r.detail || '', ref: r.ref || '', income: r.inc || '', expense: r.exp || '', note: r.note || '', profit: (r.profit !== null && r.profit !== undefined) ? r.profit : '' }); };
             const saveEdit = (r) => {
@@ -1809,55 +1786,36 @@
                         </form>
                     )}
 
-                    <div className="ledger-book">
-                        <div className="ledger-cover">
-                            <div className="font-bold text-base"><i className="fas fa-book mr-2"></i>สมุดบัญชีรายรับ-รายจ่าย · {TH_MONTHS[selectedMonth]} {selectedYear + 543}</div>
-                            <div className="text-xs opacity-90"><i className="fas fa-arrow-down-wide-short mr-1"></i>เรียงจากรายการล่าสุด → เก่าสุด</div>
-                        </div>
+                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
                         <div className="overflow-x-auto">
-                            <table className="ledger-table text-left min-w-[1040px]">
-                                <thead>
+                            <table className="w-full text-left min-w-[960px]">
+                                <thead className="bg-slate-50 text-slate-600 text-sm">
                                     <tr>
-                                        <th>วันที่ / เวลา</th><th>รายการ (คำอธิบาย)</th><th>เลขที่เอกสารอ้างอิง</th>
-                                        <th className="money-start t-inc">รายรับ (บาท)</th><th className="t-exp">รายจ่าย (บาท)</th>
-                                        {showBal && <th>คงเหลือ (บาท)</th>}
-                                        <th className="t-prof">กำไร (บาท)</th><th>หมายเหตุ</th><th>จัดการ</th>
+                                        <th className="p-3.5 border-b">วันที่</th><th className="p-3.5 border-b">รหัสสินค้า / เลขอ้างอิง</th><th className="p-3.5 border-b">รายการ (คำอธิบาย)</th>
+                                        <th className="p-3.5 border-b text-right">รายรับ (บาท)</th><th className="p-3.5 border-b text-right">รายจ่าย (บาท)</th><th className="p-3.5 border-b text-right">กำไร (บาท)</th>
+                                        <th className="p-3.5 border-b">หมายเหตุ</th><th className="p-3.5 border-b text-center">จัดการ</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {days.length === 0 && <tr><td colSpan={NC} className="p-8 text-center text-gray-400">ไม่มีรายการในส่วนนี้</td></tr>}
-                                    {showBal && days.length > 0 && (
-                                        <tr className="ledger-bf">
-                                            <td colSpan={3}>ยอดคงเหลือยกไป (ณ สิ้นรายการล่าสุดของเดือน{TH_MONTHS[selectedMonth]})</td>
-                                            <td className="money-start"></td><td></td>
-                                            <td className={`num t-bal ${closingBal < 0 ? 't-neg' : ''}`}>{balText(closingBal)}</td>
-                                            <td colSpan={3}></td>
-                                        </tr>
-                                    )}
+                                    {days.length === 0 && <tr><td colSpan={8} className="p-8 text-center text-gray-400">ไม่มีรายการในส่วนนี้</td></tr>}
                                     {days.map(g => {
-                                        const dInc = g.items.reduce((a, r) => a + r.inc, 0), dExp = g.items.reduce((a, r) => a + r.exp, 0);
-                                        const dProfit = g.items.reduce((a, r) => a + (r.profit || 0), 0);
+                                        const dInc = g.items.reduce((s, r) => s + r.inc, 0), dExp = g.items.reduce((s, r) => s + r.exp, 0);
+                                        const dProfit = g.items.reduce((s, r) => s + (r.profit || 0), 0);
                                         return (
                                             <React.Fragment key={g.k}>
-                                                <tr className="ledger-day">
-                                                    <td colSpan={3}>
+                                                <tr className="bg-blue-100 border-t-4 border-blue-300 text-sm font-bold text-blue-900">
+                                                    <td colSpan={8} className="p-3">
                                                         <i className="fas fa-calendar-day mr-2"></i>{g.d.toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
-                                                        <span className="ml-2 text-xs font-medium opacity-80">({g.items.length} รายการ · รวมวัน)</span>
+                                                        <span className="ml-3 text-xs font-medium text-blue-700">({g.items.length} รายการ)</span>
                                                     </td>
-                                                    <td className="num money-start t-inc">{money(dInc)}</td>
-                                                    <td className="num t-exp">{money(dExp)}</td>
-                                                    {showBal && <td className={`num t-bal ${g.items[0].bal < 0 ? 't-neg' : ''}`}>{balText(g.items[0].bal)}</td>}
-                                                    <td className="num t-prof">{money(dProfit)}</td>
-                                                    <td colSpan={2} className="text-xs font-medium">สุทธิ ฿{money(dInc - dExp)}</td>
                                                 </tr>
                                                 {g.items.map(r => editIdx === r._i ? (
                                                     <tr key={r._i} className="bg-yellow-50 border-b text-sm">
                                                         <td className="p-2"><input type="date" value={draft.date} onChange={e => setDraft({ ...draft, date: e.target.value })} className={inp} /></td>
-                                                        <td className="p-2"><input value={draft.detail} onChange={e => setDraft({ ...draft, detail: e.target.value })} className={inp} /></td>
                                                         <td className="p-2"><input value={draft.ref} onChange={e => setDraft({ ...draft, ref: e.target.value })} className={inp} /></td>
+                                                        <td className="p-2"><input value={draft.detail} onChange={e => setDraft({ ...draft, detail: e.target.value })} className={inp} /></td>
                                                         <td className="p-2"><input type="number" min="0" step="any" value={draft.income} onChange={e => setDraft({ ...draft, income: e.target.value })} className={inp + ' text-right'} /></td>
                                                         <td className="p-2"><input type="number" min="0" step="any" value={draft.expense} onChange={e => setDraft({ ...draft, expense: e.target.value })} className={inp + ' text-right'} /></td>
-                                                        {showBal && <td className="p-2 text-right text-gray-400">-</td>}
                                                         <td className="p-2"><input type="number" step="any" placeholder="-" value={draft.profit} onChange={e => setDraft({ ...draft, profit: e.target.value })} className={inp + ' text-right'} /></td>
                                                         <td className="p-2"><input value={draft.note} onChange={e => setDraft({ ...draft, note: e.target.value })} className={inp} /></td>
                                                         <td className="p-2 text-center whitespace-nowrap">
@@ -1866,44 +1824,40 @@
                                                         </td>
                                                     </tr>
                                                 ) : (
-                                                    <tr key={r._i} className="ledger-row">
-                                                        <td className="whitespace-nowrap">
-                                                            <div className="font-semibold text-gray-700">{r._d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' })}</div>
-                                                            <div className="text-xs text-gray-400">{r._d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.</div>
-                                                        </td>
-                                                        <td className="font-medium">
+                                                    <tr key={r._i} className="border-b hover:bg-gray-50 text-sm transition">
+                                                        <td className="p-3.5 text-gray-500 whitespace-nowrap"><div className="font-bold text-gray-700">{r._d.toLocaleDateString('th-TH', { day: '2-digit', month: '2-digit', year: 'numeric' })}</div><div className="text-xs text-gray-400">{r._d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.</div></td>
+                                                        <td className="p-3.5 whitespace-nowrap font-mono text-xs">{skuOf(r) && <div className="font-bold text-gray-800">{skuOf(r)}</div>}<div className="text-gray-400">{r.ref || (skuOf(r) ? '' : '-')}</div></td>
+                                                        <td className="p-3.5 font-medium">
                                                             {r.detail}
                                                             {r.qty && r.qty !== '-' ? <span className="text-xs text-gray-400"> (x{r.qty})</span> : null}
                                                         </td>
-                                                        <td className="text-gray-500 whitespace-nowrap">{r.ref || '-'}</td>
-                                                        <td className="num money-start t-inc">{r.inc ? money(r.inc) : ''}</td>
-                                                        <td className="num t-exp">{r.exp ? money(r.exp) : ''}</td>
-                                                        {showBal && <td className={`num t-bal ${r.bal < 0 ? 't-neg' : ''}`}>{balText(r.bal)}</td>}
-                                                        <td className="num t-prof">{(r.profit !== null && r.profit !== undefined) ? money(r.profit) : '-'}</td>
-                                                        <td className="text-gray-500">{r.note}</td>
-                                                        <td className="text-center whitespace-nowrap">
+                                                        
+                                                        <td className="p-3.5 text-right font-bold text-green-600">{r.inc ? r.inc.toLocaleString() : ''}</td>
+                                                        <td className="p-3.5 text-right font-bold text-red-600">{r.exp ? r.exp.toLocaleString() : ''}</td>
+                                                        <td className="p-3.5 text-right font-bold text-purple-600">{(r.profit !== null && r.profit !== undefined) ? r.profit.toLocaleString() : '-'}</td>
+                                                        <td className="p-3.5 text-gray-500">{r.note}</td>
+                                                        <td className="p-3.5 text-center whitespace-nowrap">
                                                             <button onClick={() => startEdit(r)} className="text-blue-600 hover:bg-blue-100 p-2 rounded-lg" title="แก้ไข"><i className="fas fa-edit"></i></button>
                                                             <button onClick={() => removeRow(r)} className="text-red-500 hover:bg-red-100 p-2 rounded-lg" title="ลบ"><i className="fas fa-trash"></i></button>
                                                         </td>
                                                     </tr>
                                                 ))}
+                                                <tr className="bg-amber-100 border-b-2 border-amber-300 text-sm font-bold">
+                                                    <td className="p-3.5 text-amber-800" colSpan={3}>สรุปวันที่ {g.d.toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' })} — รายรับ ฿{dInc.toLocaleString()} · รายจ่าย ฿{dExp.toLocaleString()}</td>
+                                                    <td className="p-3.5 text-right text-green-700">{dInc.toLocaleString()}</td>
+                                                    <td className="p-3.5 text-right text-red-700">{dExp.toLocaleString()}</td>
+                                                    <td className="p-3.5 text-right text-purple-700">{dProfit.toLocaleString()}</td>
+                                                    <td className="p-3.5 text-amber-800" colSpan={2}>สุทธิ ฿{(dInc - dExp).toLocaleString()}</td>
+                                                </tr>
+                                                <tr><td colSpan={8} className="h-3 bg-slate-50"></td></tr>
                                             </React.Fragment>
                                         );
                                     })}
-                                    {showBal && days.length > 0 && (
-                                        <tr className="ledger-bf">
-                                            <td colSpan={3}>ยอดยกมา (ต้นเดือน{TH_MONTHS[selectedMonth]})</td>
-                                            <td className="money-start"></td><td></td>
-                                            <td className={`num t-bal ${openingBal < 0 ? 't-neg' : ''}`}>{balText(openingBal)}</td>
-                                            <td colSpan={3}></td>
-                                        </tr>
-                                    )}
-                                    <tr className="ledger-sum">
-                                        <td colSpan={3}>{showBal ? `รวมทั้งเดือน ${TH_MONTHS[selectedMonth]} ${selectedYear + 543}` : 'รวมเฉพาะรายการในแท็บนี้ (เดือนที่เลือก)'}</td>
-                                        <td className="num money-start t-inc">{money(fInc)}</td>
-                                        <td className="num t-exp">{money(fExp)}</td>
-                                        {showBal && <td className={`num t-bal ${closingBal < 0 ? 't-neg' : ''}`}>{balText(closingBal)}</td>}
-                                        <td className="num t-prof">{money(fProfit)}</td>
+                                    <tr className="bg-blue-50 text-sm font-extrabold">
+                                        <td className="p-3.5 text-blue-800" colSpan={3}>รวมทั้งเดือน {TH_MONTHS[selectedMonth]} {selectedYear} — รายรับรวม ฿{totalIncome.toLocaleString()}</td>
+                                        <td className="p-3.5 text-right text-green-700">{totalIncome.toLocaleString()}</td>
+                                        <td className="p-3.5 text-right text-red-700"></td>
+                                        <td className="p-3.5 text-right text-purple-700">{monthSalesProfit.toLocaleString()}</td>
                                         <td colSpan={2}></td>
                                     </tr>
                                 </tbody>
@@ -1922,10 +1876,7 @@
                 { key: 'อุปกรณ์เสริม', icon: 'fa-headphones', match: c => c === 'อุปกรณ์เสริม' },
                 { key: 'เครื่อง', icon: 'fa-mobile-alt', match: c => c === 'เครื่องใหม่' || c === 'เครื่องมือ2' }
             ];
-            // เครื่องมือ1 / เครื่องมือ2 มีชิ้นเดียว: ถ้าขายแล้ว (คงเหลือ <= 0) ไม่ต้องแสดงใน POS
-            const isSoldOutDevice = i => (i.category === 'เครื่องใหม่' || i.category === 'เครื่องมือ2') && Number(i.qty) <= 0;
-            const posInventory = inventory.filter(i => !isSoldOutDevice(i));
-            const shown = posInventory.filter(i => cats.find(c => c.key === cat).match(i.category));
+            const shown = inventory.filter(i => cats.find(c => c.key === cat).match(i.category));
             const [cart, setCart] = useState([]);
             const [galleryItem, setGalleryItem] = useState(null);
 
@@ -1967,11 +1918,10 @@
                 const saleId = `INV-${Date.now()}`;
                 
                 cart.forEach(cartItem => {
-                    // เครื่องมือ1 / เครื่องมือ2 มีชิ้นเดียว: ขายแล้วหมดสต็อก = ลบรายการออกจากสต็อกเลย (อะไหล่/อุปกรณ์เสริมยังอยู่แม้เหลือ 0)
-                    setInventory(prev => prev.map(i => i.id === cartItem.id ? { ...i, qty: i.qty - cartItem.qty } : i)
-                        .filter(i => !((i.category === 'เครื่องใหม่' || i.category === 'เครื่องมือ2') && i.qty <= 0)));
+                    // ตัดสต็อก (เครื่องที่เหลือ 0 จะถูกลบพร้อมรูปโดยตัวกวาดใน App)
+                    setInventory(prev => prev.map(i => i.id === cartItem.id ? { ...i, qty: i.qty - cartItem.qty } : i));
                     const itemProfit = (cartItem.price - (cartItem.cost || 0)) * cartItem.qty; // ราคาขาย - ราคาทุน
-                    addTransaction('รายรับ', `ขายสินค้า (POS): ${cartItem.name}`, cartItem.price * cartItem.qty, cartItem.qty, saleId, '', itemProfit);
+                    addTransaction('รายรับ', `ขายสินค้า (POS): ${cartItem.name}`, cartItem.price * cartItem.qty, cartItem.qty, saleId, '', itemProfit, cartItem.sku || '');
                 });
 
                 const sale = { id: saleId, date: new Date().toISOString(), total, items: cart };
@@ -1988,7 +1938,7 @@
                         <div className="flex flex-wrap gap-2">
                             {cats.map(c => (
                                 <button key={c.key} onClick={() => setCat(c.key)} className={`px-4 py-2.5 rounded-xl font-bold text-sm border transition ${cat === c.key ? 'bg-blue-600 text-white border-blue-600 shadow-sm' : 'bg-white text-gray-600 hover:bg-blue-50'}`}>
-                                    <i className={`fas ${c.icon} mr-2`}></i>{c.key} ({posInventory.filter(i => c.match(i.category)).length})
+                                    <i className={`fas ${c.icon} mr-2`}></i>{c.key} ({inventory.filter(i => c.match(i.category)).length})
                                 </button>
                             ))}
                         </div>
@@ -2213,6 +2163,16 @@
                 return () => { document.removeEventListener('visibilitychange', pull); window.removeEventListener('beforeunload', warn); clearInterval(iv); };
             }, [dataLoaded]);
 
+            // กวาดเครื่องมือ1/เครื่องมือ2 ที่ขายหมดแล้ว (qty 0): ลบออกจากสต็อกและหน้า POS พร้อมลบรูป
+            useEffect(() => {
+                if (!dataLoaded) return;
+                const sold = inventory.filter(i => isPhoneCat(i.category) && (Number(i.qty) || 0) <= 0);
+                if (!sold.length) return;
+                deleteDriveImages(sold);
+                setInventory(prev => prev.filter(i => !(isPhoneCat(i.category) && (Number(i.qty) || 0) <= 0)));
+                showToast(`ลบเครื่องที่ขายหมดแล้ว ${sold.length} รายการ (รวมรูป) ออกจากสต็อกแล้ว`);
+            }, [inventory, dataLoaded]);
+
             useEffect(() => {
                 const handleAfterPrint = () => setPrintConfig(null);
                 window.addEventListener('afterprint', handleAfterPrint);
@@ -2221,7 +2181,7 @@
 
             const showToast = (msg) => setToastMessage(msg);
             
-            const addTransaction = (type, detail, amount = 0, qty = '-', ref = '', note = '', profit = null) => {
+            const addTransaction = (type, detail, amount = 0, qty = '-', ref = '', note = '', profit = null, sku = '') => {
                 setTransactions(prev => [{ 
                     id: nextTs(), 
                     date: new Date().toLocaleString('th-TH'), 
@@ -2231,6 +2191,7 @@
                     amount,
                     qty,
                     ref,
+                    sku,
                     note,
                     profit // กำไร = ราคาขาย - ราคาทุน (เฉพาะรายการซื้อขายสินค้า), null = ไม่ใช่รายการขายสินค้า
                 }, ...prev]);
@@ -2299,6 +2260,45 @@
                                 </div>
                             )}
 
+                            {printConfig.type === 'pawn' && (() => {
+                                const pp = printConfig.data; const sm = pawnSummary(pp); const baht = (n) => '฿' + (Number(n) || 0).toLocaleString();
+                                return (
+                                <div className="max-w-3xl mx-auto p-8">
+                                    <div className="text-center border-b pb-4 mb-6">
+                                        <img src={LOGO_SRC} alt="GP Mobile shop" className="w-16 h-16 mx-auto mb-2" />
+                                        <h1 className="text-3xl font-bold">ใบรับจำนำ / ใบเสร็จรับดอกเบี้ย</h1>
+                                        <h2 className="text-xl font-bold mt-2">GP Mobile shop</h2>
+                                        <p className="text-gray-600 mt-1">เบอร์โทร: 093-014-5788 | Line: @372ipazw</p>
+                                    </div>
+                                    <div className="flex justify-between mb-4"><p><strong>เลขที่:</strong> {pp.id}</p><p><strong>พิมพ์เมื่อ:</strong> {new Date().toLocaleString('th-TH')}</p></div>
+                                    <div className="grid grid-cols-2 gap-1 mb-6 text-sm">
+                                        <p><strong>ผู้จำนำ:</strong> {pp.name}</p><p><strong>โทร:</strong> {pp.phone || '-'}</p>
+                                        <p><strong>เครื่อง:</strong> {pp.model}</p><p><strong>IMEI:</strong> {pp.imei || '-'}</p>
+                                        <p><strong>วันที่รับจำนำ:</strong> {pp.startDate || '-'}</p><p><strong>ครบกำหนดล่าสุด:</strong> {pp.dueDate || '-'}</p>
+                                        <p><strong>เงินต้น:</strong> {baht(sm.principal)}</p><p><strong>สถานะ:</strong> {pp.status}</p>
+                                    </div>
+                                    <table className="w-full text-left border-collapse mb-6 text-sm">
+                                        <thead><tr className="border-b-2 border-black"><th className="py-2">ครั้งที่</th><th className="py-2">วันที่</th><th className="py-2">รายการ</th><th className="py-2 text-right">ดอกเบี้ย (บาท)</th></tr></thead>
+                                        <tbody>
+                                            <tr className="border-b"><td className="py-2">0</td><td className="py-2">{pp.startDate || '-'}</td><td className="py-2">รับจำนำ เงินต้น {baht(sm.principal)}</td><td className="py-2 text-right">-</td></tr>
+                                            {sm.log.map((x, i) => (
+                                                <tr key={i} className="border-b"><td className="py-2">{i + 1}</td><td className="py-2">{x.date}</td><td className="py-2">ต่อดอก เลื่อนครบกำหนด {x.fromDue || '-'} → {x.toDue}{x.lateDays > 0 ? ` (เกินกำหนด ${x.lateDays} วัน)` : ''}</td><td className="py-2 text-right">{(x.amount || 0).toLocaleString()}</td></tr>
+                                            ))}
+                                            {sm.renewCount > sm.log.length && <tr className="border-b"><td className="py-2" colSpan={4}>ต่อดอกก่อนระบบบันทึกรายครั้ง {sm.renewCount - sm.log.length} ครั้ง</td></tr>}
+                                        </tbody>
+                                    </table>
+                                    <div className="text-sm space-y-1 mb-6">
+                                        <p>ต่อดอกแล้ว {sm.renewCount} ครั้ง · รวมดอกเบี้ยที่รับแล้ว <strong>{baht(sm.renewTotal)}</strong></p>
+                                        <p>เกินกำหนด {sm.lateTimes} ครั้ง รวม {sm.lateDays} วัน</p>
+                                        <p className="text-lg font-bold">ยอดไถ่ถอน (เงินต้น + ดอกเบี้ย 1 รอบ): {baht(sm.redeem)}</p>
+                                    </div>
+                                    <div className="flex justify-between mt-16">
+                                        <div className="text-center w-48 border-t border-black pt-2 text-sm">ผู้รับเงิน</div>
+                                        <div className="text-center w-48 border-t border-black pt-2 text-sm">ผู้จำนำ</div>
+                                    </div>
+                                </div>);
+                            })()}
+
                             {printConfig.type === 'sale' && (
                                 <div className="max-w-3xl mx-auto p-8">
                                     <div className="text-center border-b pb-4 mb-6">
@@ -2359,19 +2359,19 @@
                                         <tbody>
                                             {(() => {
                                                 const groups = [];
-                                                printConfig.data.transactions.forEach(t => {
+                                                [...printConfig.data.transactions].reverse().forEach(t => {
                                                     const d = t._d || new Date(t.rawDate || t.id);
                                                     const k = dayKey(d);
                                                     let g = groups[groups.length - 1];
                                                     if (!g || g.k !== k) { g = { k, d, items: [] }; groups.push(g); }
                                                     g.items.push(t);
                                                 });
-                                                return groups.map(g => {
+                                                return groups.map((g, gx) => {
                                                     const gi = g.items.filter(t => t.type === 'รายรับ').reduce((s, t) => s + (t.amount || 0), 0);
                                                     const ge = g.items.filter(t => t.type === 'รายจ่าย').reduce((s, t) => s + (t.amount || 0), 0);
                                                     return (
                                                         <React.Fragment key={g.k}>
-                                                            <tr className="bg-gray-100 border-b border-t-2 border-black"><td colSpan={4} className="py-2 px-1 text-sm font-bold">{g.d.toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })} ({g.items.length} รายการ)</td></tr>
+                                                            <tr className="bg-gray-100 border-b border-t-2 border-black" style={gx > 0 ? { pageBreakBefore: 'always', breakBefore: 'page' } : undefined}><td colSpan={4} className="py-2 px-1 text-sm font-bold">{g.d.toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })} ({g.items.length} รายการ)</td></tr>
                                                             {g.items.map((t, i) => (
                                                                 <tr key={i} className="border-b">
                                                                     <td className="py-3 text-sm">{(t._d || new Date(t.rawDate || t.id)).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.</td>
@@ -2472,11 +2472,11 @@
                             <div className="flex-1 overflow-auto p-4 sm:p-6 lg:p-8">
                                 <div className="max-w-7xl mx-auto h-full pb-20">
                                     {activeTab === 'dashboard' && <DashboardTab inventory={inventory} pawns={pawns} repairs={repairs} sales={sales} transactions={transactions} />}
-                                    {activeTab === 'inventory' && <InventoryTab inventory={inventory} setInventory={setInventory} userRole={userRole} addTransaction={addTransaction} showToast={showToast} onPrint={handlePrint} />}
+                                    {activeTab === 'inventory' && <InventoryTab sales={sales} inventory={inventory} setInventory={setInventory} userRole={userRole} addTransaction={addTransaction} showToast={showToast} onPrint={handlePrint} />}
                                     {activeTab === 'repair' && <RepairTab repairs={repairs} setRepairs={setRepairs} inventory={inventory} setInventory={setInventory} addTransaction={addTransaction} showToast={showToast} onPrint={handlePrint} />}
-                                    {activeTab === 'pawn' && <PawnTab pawns={pawns} setPawns={setPawns} setTransactions={setTransactions} showToast={showToast} addTransaction={addTransaction} />}
+                                    {activeTab === 'pawn' && <PawnTab onPrint={handlePrint} pawns={pawns} setPawns={setPawns} setTransactions={setTransactions} showToast={showToast} addTransaction={addTransaction} />}
                                     {activeTab === 'crm' && <CRMTab repairs={repairs} pawns={pawns} onPrintRepair={handlePrint} />}
-                                    {activeTab === 'transactions' && <TransactionTab transactions={transactions} setTransactions={setTransactions} showToast={showToast} onPrint={handlePrint} />}
+                                    {activeTab === 'transactions' && <TransactionTab inventory={inventory} sales={sales} transactions={transactions} setTransactions={setTransactions} showToast={showToast} onPrint={handlePrint} />}
                                     {activeTab === 'pos' && <POSTab inventory={inventory} setInventory={setInventory} addTransaction={addTransaction} addSale={s => setSales([...sales, s])} showToast={showToast} onPrint={handlePrint} />}
                                 </div>
                             </div>
