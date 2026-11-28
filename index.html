@@ -590,8 +590,8 @@ body.gx-crystal::after { opacity: 1; }
             const imgs = getItemImages(item);
             const [idx, setIdx] = useState(0);
             const go = (d) => setIdx(i => (i + d + imgs.length) % imgs.length);
-            return (
-                <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4" onClick={onClose}>
+            return ReactDOM.createPortal(
+                <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[80] p-4" onClick={onClose}>
                     <div onClick={e => e.stopPropagation()} className="bg-white rounded-2xl w-full max-w-lg max-h-[92vh] overflow-auto modal-enter">
                         <div className="flex justify-between items-center p-4 border-b">
                             <div className="font-bold text-gray-800 truncate pr-3">{item.name}</div>
@@ -621,7 +621,8 @@ body.gx-crystal::after { opacity: 1; }
                             )}
                         </div>
                     </div>
-                </div>
+                </div>,
+                document.body
             );
         };
 
@@ -631,17 +632,247 @@ body.gx-crystal::after { opacity: 1; }
             return `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}-${String(dateObj.getDate()).padStart(2, '0')}`;
         };
 
+        // ===== ตั้งค่าร้านและระบบภาษีมูลค่าเพิ่ม (VAT 7%) =====
+        const TAX_CONFIG_KEY = 'gp_tax_config_v1';
+        const DEFAULT_TAX_CONFIG = {
+            shopName: 'GP Mobile shop',
+            taxId: '',
+            branch: 'สำนักงานใหญ่ (00000)',
+            address: '',
+            phone: '093-014-5788',
+            line: '@372ipazw',
+            vatMode: 'included', // 'none' | 'included' (ราคารวม VAT 7%) | 'excluded' (บวก VAT 7% เพิ่ม)
+            vatRate: 7
+        };
+        const loadTaxConfig = () => {
+            try {
+                const raw = localStorage.getItem(TAX_CONFIG_KEY);
+                return raw ? { ...DEFAULT_TAX_CONFIG, ...JSON.parse(raw) } : { ...DEFAULT_TAX_CONFIG };
+            } catch (e) { return { ...DEFAULT_TAX_CONFIG }; }
+        };
+        const saveTaxConfig = (cfg) => {
+            try { localStorage.setItem(TAX_CONFIG_KEY, JSON.stringify(cfg)); } catch (e) {}
+        };
+        const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+        const fmtMoney = (n) => (Number(n) || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const fmtCompact = (n) => {
+            const v = round2(n);
+            return Number.isInteger(v) ? v.toLocaleString('th-TH') : v.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        };
+        const calcVat = (amount, mode = 'none', rate = 7) => {
+            const a = Number(amount) || 0;
+            const r = Number(rate) || 0;
+            if (!r || mode === 'none') return { base: round2(a), vat: 0, total: round2(a) };
+            if (mode === 'excluded') {
+                const vat = round2(a * r / 100);
+                return { base: round2(a), vat, total: round2(a + vat) };
+            }
+            const base = round2(a / (1 + r / 100));
+            const vat = round2(a - base);
+            return { base, vat, total: round2(a) };
+        };
+        // แปลงตัวเลขเป็นคำอ่านภาษาไทย (สำหรับใบเสร็จ/ใบกำกับภาษี)
+        const thaiBahtText = (num) => {
+            const val = round2(Math.abs(Number(num) || 0));
+            if (val === 0) return 'ศูนย์บาทถ้วน';
+            const digits = ['', 'หนึ่ง', 'สอง', 'สาม', 'สี่', 'ห้า', 'หก', 'เจ็ด', 'แปด', 'เก้า'];
+            const places = ['', 'สิบ', 'ร้อย', 'พัน', 'หมื่น', 'แสน', 'ล้าน'];
+            const readInt = (n) => {
+                if (n === 0) return '';
+                if (n >= 1000000) return readInt(Math.floor(n / 1000000)) + 'ล้าน' + readInt(n % 1000000);
+                const s = String(n);
+                let out = '';
+                for (let i = 0; i < s.length; i++) {
+                    const d = Number(s[i]);
+                    const pos = s.length - 1 - i;
+                    if (d === 0) continue;
+                    if (pos === 0 && d === 1 && s.length > 1) out += 'เอ็ด';
+                    else if (pos === 1 && d === 2) out += 'ยี่สิบ';
+                    else if (pos === 1 && d === 1) out += 'สิบ';
+                    else out += digits[d] + places[pos];
+                }
+                return out;
+            };
+            const baht = Math.floor(val);
+            const satang = Math.round((val - baht) * 100);
+            let txt = (baht > 0 ? readInt(baht) + 'บาท' : '');
+            txt += satang > 0 ? readInt(satang) + 'สตางค์' : 'ถ้วน';
+            return (Number(num) < 0 ? 'ลบ' : '') + txt;
+        };
+
+        const classifyTx = (t) => {
+            const d = String(t.detail || '');
+            if (d.includes('ซื้อสินค้าเข้าสต็อก')) return 'stock_buy';
+            if (d.includes('ปล่อยเงินรับจำนำ')) return 'pawn_out';
+            if (d.includes('ต่อดอกจำนำ')) return 'pawn_renew';
+            if (d.includes('ไถ่เครื่องจำนำ') || d.includes('ออกก่อนกำหนด')) return 'pawn_redeem';
+            if (d.includes('ขายสินค้า (POS)')) return 'sale';
+            if (d.includes('งานซ่อมบิล')) return 'repair';
+            return t.type === 'รายรับ' ? 'other_inc' : 'other_exp';
+        };
+
         const buildLedger = (transactions) => {
             let bal = 0;
             return transactions
                 .map((t, i) => ({ ...t, _i: i, _d: txDate(t) }))
                 .sort((a, b) => a._d - b._d || a._i - b._i)
                 .map(t => {
-                    const inc = t.type === 'รายรับ' ? (t.amount || 0) : 0;
-                    const exp = t.type === 'รายจ่าย' ? (t.amount || 0) : 0;
-                    bal += inc - exp;
-                    return { ...t, inc, exp, bal };
+                    const inc = t.type === 'รายรับ' ? (Number(t.amount) || 0) : 0;
+                    const exp = t.type === 'รายจ่าย' ? (Number(t.amount) || 0) : 0;
+                    const vat = Number(t.vat) || 0;
+                    const kind = classifyTx(t);
+                    const hasProfit = t.profit !== null && t.profit !== undefined && t.profit !== '';
+                    const hasCost = t.cost !== null && t.cost !== undefined && t.cost !== '';
+                    let profit = hasProfit ? (Number(t.profit) || 0) : null;
+                    let cost = hasCost ? (Number(t.cost) || 0) : null;
+
+                    // รองรับข้อมูลเก่าใน Google Sheets ที่ยังไม่ได้บันทึกช่อง cost / profit
+                    if (kind === 'pawn_renew') {
+                        if (profit === null) profit = inc;
+                        if (cost === null) cost = 0;
+                    } else if ((kind === 'sale' || kind === 'repair') && cost === null && profit !== null) {
+                        cost = Math.max(0, round2((inc - vat) - profit));
+                    } else if (kind === 'stock_buy' && cost === null) {
+                        cost = exp;
+                    } else if (kind === 'pawn_out' && cost === null) {
+                        cost = exp;
+                    } else if (kind === 'pawn_redeem' && cost === null && profit !== null) {
+                        cost = Math.max(0, round2(inc - profit));
+                    }
+
+                    bal = round2(bal + inc - exp);
+                    return { ...t, inc, exp, vat, cost, profit, kind, bal };
                 });
+        };
+
+        // สรุปงบกำไรขาดทุนทางบัญชี (P&L) แยกออกจากกระแสเงินสด (ซื้อสต็อก / ปล่อยจำนำ)
+        const summarizePnL = (rows) => {
+            let totalIncome = 0, totalExpense = 0;
+            let salesGross = 0, salesBase = 0, totalVatOut = 0, totalCOGS = 0;
+            let pawnInterest = 0, pawnRedeemPrincipal = 0;
+            let otherIncome = 0, operatingExpense = 0;
+            let stockBuyExpense = 0, pawnOutExpense = 0;
+            let totalRowProfit = 0;
+
+            rows.forEach(r => {
+                totalIncome += r.inc;
+                totalExpense += r.exp;
+                if (r.profit !== null && r.profit !== undefined) totalRowProfit += r.profit;
+
+                if (r.kind === 'sale' || r.kind === 'repair') {
+                    salesGross += r.inc;
+                    salesBase += (r.inc - r.vat);
+                    totalVatOut += r.vat;
+                    totalCOGS += (r.cost || 0);
+                } else if (r.kind === 'pawn_renew') {
+                    pawnInterest += (r.profit !== null ? r.profit : r.inc);
+                } else if (r.kind === 'pawn_redeem') {
+                    if (r.profit !== null) {
+                        pawnInterest += r.profit;
+                        pawnRedeemPrincipal += (r.cost !== null ? r.cost : Math.max(0, r.inc - r.profit));
+                    } else {
+                        pawnRedeemPrincipal += r.inc;
+                    }
+                } else if (r.kind === 'stock_buy') {
+                    stockBuyExpense += r.exp;
+                } else if (r.kind === 'pawn_out') {
+                    pawnOutExpense += r.exp;
+                } else if (r.kind === 'other_inc') {
+                    otherIncome += r.inc;
+                } else if (r.kind === 'other_exp') {
+                    operatingExpense += r.exp;
+                }
+            });
+
+            const grossProfit = round2(salesBase - totalCOGS);
+            const trueNetProfit = round2(grossProfit + pawnInterest + otherIncome - operatingExpense);
+            return {
+                totalIncome: round2(totalIncome),
+                totalExpense: round2(totalExpense),
+                netCashFlow: round2(totalIncome - totalExpense),
+                salesGross: round2(salesGross),
+                salesBase: round2(salesBase),
+                totalVatOut: round2(totalVatOut),
+                totalCOGS: round2(totalCOGS),
+                grossProfit,
+                pawnInterest: round2(pawnInterest),
+                pawnRedeemPrincipal: round2(pawnRedeemPrincipal),
+                otherIncome: round2(otherIncome),
+                operatingExpense: round2(operatingExpense),
+                stockBuyExpense: round2(stockBuyExpense),
+                pawnOutExpense: round2(pawnOutExpense),
+                trueNetProfit,
+                totalRowProfit: round2(totalRowProfit)
+            };
+        };
+
+        // หน้าต่างตั้งค่าข้อมูลร้านและภาษี (VAT 7%)
+        const TaxSettingsModal = ({ taxConfig, onSave, onClose }) => {
+            const [cfg, setCfg] = useState({ ...taxConfig });
+            const handleSave = (e) => {
+                e.preventDefault();
+                onSave({ ...cfg, vatRate: parseFloat(cfg.vatRate) || 7 });
+                onClose();
+            };
+            const sample = calcVat(150, cfg.vatMode, cfg.vatRate);
+            return ReactDOM.createPortal(
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[75] p-4" onClick={onClose}>
+                    <form onSubmit={handleSave} onClick={e => e.stopPropagation()} className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 space-y-4 modal-enter">
+                        <div className="flex justify-between items-center border-b pb-3">
+                            <h3 className="text-lg font-bold text-gray-800"><i className="fas fa-file-invoice-dollar text-blue-600 mr-2"></i>ตั้งค่าข้อมูลร้าน & ภาษีมูลค่าเพิ่ม (VAT)</h3>
+                            <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-600"><i className="fas fa-times text-lg"></i></button>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                            <div className="md:col-span-2">
+                                <label className="text-xs text-gray-500">ชื่อร้าน / ชื่อบริษัท (แสดงบนหัวใบเสร็จและสมุดบัญชี)</label>
+                                <input required value={cfg.shopName} onChange={e => setCfg({ ...cfg, shopName: e.target.value })} className="w-full border p-2.5 rounded-xl" />
+                            </div>
+                            <div>
+                                <label className="text-xs text-gray-500">เลขประจำตัวผู้เสียภาษี (13 หลัก)</label>
+                                <input value={cfg.taxId} onChange={e => setCfg({ ...cfg, taxId: e.target.value })} className="w-full border p-2.5 rounded-xl font-mono" placeholder="0-xxxx-xxxxx-xx-x" />
+                            </div>
+                            <div>
+                                <label className="text-xs text-gray-500">สาขา</label>
+                                <input value={cfg.branch} onChange={e => setCfg({ ...cfg, branch: e.target.value })} className="w-full border p-2.5 rounded-xl" placeholder="สำนักงานใหญ่ (00000)" />
+                            </div>
+                            <div className="md:col-span-2">
+                                <label className="text-xs text-gray-500">ที่อยู่ร้าน / สถานประกอบการ</label>
+                                <input value={cfg.address} onChange={e => setCfg({ ...cfg, address: e.target.value })} className="w-full border p-2.5 rounded-xl" placeholder="เลขที่ ถนน ตำบล อำเภอ จังหวัด รหัสไปรษณีย์" />
+                            </div>
+                            <div>
+                                <label className="text-xs text-gray-500">เบอร์โทร</label>
+                                <input value={cfg.phone} onChange={e => setCfg({ ...cfg, phone: e.target.value })} className="w-full border p-2.5 rounded-xl" />
+                            </div>
+                            <div>
+                                <label className="text-xs text-gray-500">Line ID</label>
+                                <input value={cfg.line} onChange={e => setCfg({ ...cfg, line: e.target.value })} className="w-full border p-2.5 rounded-xl" />
+                            </div>
+                            <div>
+                                <label className="text-xs text-gray-500">โหมดคำนวณ VAT เริ่มต้น (หน้า POS & ซ่อม)</label>
+                                <select value={cfg.vatMode} onChange={e => setCfg({ ...cfg, vatMode: e.target.value })} className="w-full border p-2.5 rounded-xl bg-white">
+                                    <option value="included">ราคารวม VAT 7% แล้ว (VAT Included)</option>
+                                    <option value="excluded">บวก VAT 7% เพิ่มจากราคาขาย (VAT Excluded)</option>
+                                    <option value="none">ไม่คิด VAT (ยังไม่จดทะเบียน VAT)</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="text-xs text-gray-500">อัตราภาษี VAT (%)</label>
+                                <input type="number" step="0.1" min="0" max="30" value={cfg.vatRate} onChange={e => setCfg({ ...cfg, vatRate: e.target.value })} className="w-full border p-2.5 rounded-xl" />
+                            </div>
+                        </div>
+                        <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-900 space-y-1">
+                            <div className="font-bold"><i className="fas fa-calculator mr-1"></i>ตัวอย่างคำนวณ: สินค้าต้นทุน ฿100 ตั้งราคาขาย ฿150</div>
+                            <div>• มูลค่าก่อน VAT: <b>฿{fmtMoney(sample.base)}</b> · VAT {cfg.vatRate}%: <b>฿{fmtMoney(sample.vat)}</b> · ลูกค้าจ่าย: <b>฿{fmtMoney(sample.total)}</b></div>
+                            <div>• กำไรสุทธิหลังหัก VAT (ก่อน VAT − ต้นทุน): <b className="text-green-700">฿{fmtMoney(sample.base - 100)}</b></div>
+                        </div>
+                        <div className="flex gap-3 pt-1">
+                            <button type="button" onClick={onClose} className="flex-1 border py-2.5 rounded-xl font-bold text-gray-600 hover:bg-gray-50">ยกเลิก</button>
+                            <button type="submit" className="flex-1 bg-blue-600 text-white py-2.5 rounded-xl font-bold hover:bg-blue-700 shadow-md">บันทึกการตั้งค่า</button>
+                        </div>
+                    </form>
+                </div>,
+                document.body
+            );
         };
 
         // ==========================================
@@ -784,17 +1015,15 @@ body.gx-crystal::after { opacity: 1; }
             
             const ledger = buildLedger(transactions);
             const monthRows = ledger.filter(r => r._d.getMonth() === currentMonth && r._d.getFullYear() === currentYear);
-            const mIncome = monthRows.reduce((s, r) => s + r.inc, 0);
-            const mExpense = monthRows.reduce((s, r) => s + r.exp, 0);
+            const pnl = summarizePnL(monthRows);
             const todayIncome = ledger.filter(r => dayKey(r._d) === dayKey(new Date())).reduce((s, r) => s + r.inc, 0);
-            const mSalesProfit = monthRows.reduce((s, r) => s + (r.profit || 0), 0); // กำไรจากรายการซื้อขายสินค้า (ราคาขาย-ต้นทุน) เดือนนี้
 
             const bookCards = [
                 { label: 'วันนี้ขายได้', val: todayIncome, color: 'text-green-600', bg: 'bg-green-50' },
                 { label: 'ต้นทุนภายในร้านรวม', val: internalStoreCost, color: 'text-amber-600', bg: 'bg-amber-50' },
-                { label: 'ขายได้/รายรับเดือนนี้', val: mIncome, color: 'text-green-600', bg: 'bg-green-50' },
-                { label: 'กำไรสุทธิเดือนนี้', val: mIncome - mExpense, color: 'text-blue-600', bg: 'bg-blue-50' },
-                { label: 'กำไรจากการขายสินค้าเดือนนี้', val: mSalesProfit, color: 'text-purple-600', bg: 'bg-purple-50' },
+                { label: 'รายรับเดือนนี้', val: pnl.totalIncome, color: 'text-green-600', bg: 'bg-green-50' },
+                { label: 'กระแสเงินสด (รับ − จ่าย)', val: pnl.netCashFlow, color: 'text-blue-600', bg: 'bg-blue-50' },
+                { label: 'กำไรสุทธิจริงเดือนนี้ (หักทุน)', val: pnl.trueNetProfit, color: pnl.trueNetProfit >= 0 ? 'text-purple-600' : 'text-red-600', bg: 'bg-purple-50' },
             ];
 
             const pendingPawns = pawns.filter(p => ['อยู่ในระหว่างจำนำ', 'อยู่ในระหว่างหลุดจำนำ'].includes(p.status)).length;
@@ -1144,7 +1373,7 @@ body.gx-crystal::after { opacity: 1; }
                     ...packImages(formData.images)
                 };
                 setInventory([...inventory, newItem]);
-                addTransaction('รายจ่าย', `ซื้อสินค้าเข้าสต็อก: ${newItem.name}`, cost * qty, qty, newItem.id, '', null, newItem.sku || '');
+                addTransaction('รายจ่าย', `ซื้อสินค้าเข้าสต็อก: ${newItem.name}`, cost * qty, qty, newItem.id, `ทุนต่อชิ้น ฿${cost.toLocaleString()} (สต็อกสินค้า)`, null, newItem.sku || '', cost * qty, 0);
                 setFormData({ 
                     sku: '', name: '', category: 'อะไหล่', cost: '', price: '', qty: '', 
                     battery: '', capacity: '', color: '', images: padImages([]), brand: '', model: '' 
@@ -1274,8 +1503,8 @@ body.gx-crystal::after { opacity: 1; }
                         </table>
                         </div>
                     </div>
-                {showOrderPanel && (
-                        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowOrderPanel(false)}>
+                {showOrderPanel && ReactDOM.createPortal(
+                        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[70] p-4" onClick={() => setShowOrderPanel(false)}>
                             <div onClick={e => e.stopPropagation()} className="bg-white rounded-2xl p-6 w-full max-w-2xl max-h-[90vh] overflow-auto space-y-4 modal-enter">
                                 <div className="flex justify-between items-center">
                                     <h3 className="text-lg font-bold text-gray-800"><i className="fas fa-cart-plus text-orange-500 mr-2"></i>รายการสั่งของ (สต็อกเหลือ ≤ {LOW_STOCK_THRESHOLD} ชิ้น)</h3>
@@ -1307,11 +1536,12 @@ body.gx-crystal::after { opacity: 1; }
                                     <button type="button" onClick={printOrderList} disabled={orderList.length === 0} className="flex-1 bg-orange-500 text-white py-2.5 rounded-xl font-bold hover:bg-orange-600 shadow-md disabled:opacity-40 disabled:cursor-not-allowed"><i className="fas fa-print mr-2"></i>พิมพ์ใบสั่งซื้อ (A4)</button>
                                 </div>
                             </div>
-                        </div>
+                        </div>,
+                        document.body
                     )}
 
-                {edit && (
-                        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setEdit(null)}>
+                {edit && ReactDOM.createPortal(
+                        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[70] p-4" onClick={() => setEdit(null)}>
                             <form onSubmit={saveEdit} onClick={e => e.stopPropagation()} className="bg-white rounded-2xl p-6 w-full max-w-xl max-h-[90vh] overflow-auto space-y-4 modal-enter">
                                 <h3 className="text-lg font-bold text-gray-800">แก้ไขสินค้า</h3>
                                 <div className="grid grid-cols-2 gap-3">
@@ -1338,7 +1568,8 @@ body.gx-crystal::after { opacity: 1; }
                                     <button type="submit" disabled={imgBusy} className="flex-1 bg-blue-600 text-white py-2.5 rounded-xl font-bold hover:bg-blue-700 shadow-md disabled:opacity-50">{imgBusy ? 'กำลังอัปโหลดรูป...' : 'บันทึก'}</button>
                                 </div>
                             </form>
-                        </div>
+                        </div>,
+                        document.body
                     )}
 
                 {galleryItem && <ImageGallery item={galleryItem} onClose={() => setGalleryItem(null)} />}
@@ -1347,7 +1578,7 @@ body.gx-crystal::after { opacity: 1; }
         };
 
         // --- 3.3 งานซ่อม (Repair) ---
-        const RepairTab = ({ repairs, setRepairs, inventory, setInventory, addTransaction, showToast, onPrint }) => {
+        const RepairTab = ({ repairs, setRepairs, inventory, setInventory, addTransaction, showToast, onPrint, taxConfig }) => {
             const [formData, setFormData] = useState({ name: '', phone: '', model: '', issue: '', partId: '', price: '' });
 
             const handleSubmit = (e) => {
@@ -1379,19 +1610,25 @@ body.gx-crystal::after { opacity: 1; }
                     setInventory(prev => prev.map(i => i.id === partId ? { ...i, qty: i.qty - 1 } : i));
                 }
 
-                // 2) กำไรงานซ่อม = ค่าซ่อม - ต้นทุนอะไหล่ (ติดลบได้ถ้าค่าซ่อมต่ำกว่าทุนอะไหล่)
-                const price = repair.price || 0;
-                const partCost = part ? (part.cost || 0) : 0;
-                const profit = price - partCost;
+                // 2) คำนวณ VAT 7% (ตามตั้งค่าร้าน) และกำไรงานซ่อม = รายได้ก่อน VAT - ต้นทุนอะไหล่
+                const rawPrice = Number(repair.price) || 0;
+                const v = calcVat(rawPrice, taxConfig?.vatMode || 'none', taxConfig?.vatRate || 7);
+                const partCost = part ? (Number(part.cost) || 0) : 0;
+                const profit = round2(v.base - partCost);
 
-                setRepairs(repairs.map(r => r.id === id ? { ...r, status: 'ซ่อมเสร็จสิ้น', cost: partCost, profit } : r));
+                setRepairs(repairs.map(r => r.id === id ? {
+                    ...r, status: 'ซ่อมเสร็จสิ้น', cost: partCost, profit,
+                    subtotal: v.base, vat: v.vat, total: v.total,
+                    vatMode: taxConfig?.vatMode || 'none', vatRate: taxConfig?.vatRate || 7
+                } : r));
 
-                // 3) ลงสมุดบัญชี: รายรับ = ค่าซ่อม, กำไร = ค่าซ่อม - ทุนอะไหล่
+                // 3) ลงสมุดบัญชี: ต้นทุนอะไหล่, รายรับ(รวม VAT), VAT 7%, และกำไรจริง
+                const vatTxt = v.vat > 0 ? ` | VAT ฿${fmtCompact(v.vat)}` : '';
                 const note = part
-                    ? `ใช้อะไหล่: ${part.name} (ทุน ฿${partCost.toLocaleString()}) กำไร ฿${profit.toLocaleString()}`
-                    : 'ไม่ใช้อะไหล่ (กำไรเต็มจำนวน)';
-                addTransaction('รายรับ', `งานซ่อมบิล ${id} (${repair.model})`, price, 1, id, note, profit);
-                showToast(part ? `จบงานซ่อม ตัดสต็อก ${part.name} และบันทึกกำไร ฿${profit.toLocaleString()} แล้ว` : `จบงานซ่อม บันทึกกำไร ฿${profit.toLocaleString()} แล้ว`);
+                    ? `อะไหล่: ${part.name} | ทุน ฿${fmtCompact(partCost)} → ขาย ฿${fmtCompact(v.total)}${vatTxt} = กำไร ฿${fmtCompact(profit)}`
+                    : `ไม่ใช้อะไหล่ | ขาย ฿${fmtCompact(v.total)}${vatTxt} = กำไร ฿${fmtCompact(profit)}`;
+                addTransaction('รายรับ', `งานซ่อมบิล ${id} (${repair.model})`, v.total, 1, id, note, profit, part ? (part.sku || '') : '', partCost, v.vat);
+                showToast(part ? `จบงานซ่อม ตัดสต็อก ${part.name} และบันทึกกำไร ฿${fmtCompact(profit)} แล้ว` : `จบงานซ่อม บันทึกกำไร ฿${fmtCompact(profit)} แล้ว`);
             };
 
             return (
@@ -1485,7 +1722,7 @@ body.gx-crystal::after { opacity: 1; }
                 };
                 
                 setPawns([...pawns, newPawn]);
-                addTransaction('รายจ่าย', `ปล่อยเงินรับจำนำ: ${newPawn.model}`, principal, 1, newPawn.id);
+                addTransaction('รายจ่าย', `ปล่อยเงินรับจำนำ: ${newPawn.model}`, principal, 1, newPawn.id, 'เงินต้นปล่อยจำนำ (สินทรัพย์)', null, '', principal, 0);
                 syncToCalendar(newPawn);
 
                 setFormData({ name: '', phone: '', idCard: '', model: '', imei: '', principal: '', startDate: '', dueDate: '', brand: '', modelSel: '' });
@@ -1517,7 +1754,7 @@ body.gx-crystal::after { opacity: 1; }
                     renewLog: [...(p.renewLog || []), { date: dayKey(new Date()), amount: profit, fromDue: p.dueDate || '', toDue: renewDate, lateDays: lateNow }]
                 };
                 setPawns(pawns.map(x => x.id === p.id ? updated : x));
-                addTransaction('รายรับ', `ต่อดอกจำนำ: ${p.model}`, profit, 1, p.id, `ต่อดอกครั้งที่ ${updated.renewCount} (10% ของ ฿${(p.principal || 0).toLocaleString()}) เลื่อนครบกำหนด ${p.dueDate || '-'} → ${renewDate}`);
+                addTransaction('รายรับ', `ต่อดอกจำนำ: ${p.model}`, profit, 1, p.id, `ต่อดอกครั้งที่ ${updated.renewCount} (10% ของ ฿${(p.principal || 0).toLocaleString()}) เลื่อนครบกำหนด ${p.dueDate || '-'} → ${renewDate}`, profit, '', 0, 0);
                 syncToCalendar(updated);
                 setRenewTarget(null);
                 showToast(`ต่อดอกสำเร็จ กำไร ฿${profit.toLocaleString()}`);
@@ -1543,9 +1780,12 @@ body.gx-crystal::after { opacity: 1; }
                 const p = pawns.find(x => x.id === id);
                 setPawns(pawns.map(pwn => pwn.id === id ? { ...pwn, status: newStatus } : pwn));
                 if (newStatus === 'ไถ่เครื่องออก') {
-                    addTransaction('รายรับ', `ลูกค้าไถ่เครื่องจำนำ: ${p.model}`, p.principal + p.interest, 1, p.id);
+                    const pr = Number(p.principal) || 0;
+                    const intr = Number(p.interest) || (pr * 0.10);
+                    addTransaction('รายรับ', `ลูกค้าไถ่เครื่องจำนำ: ${p.model}`, pr + intr, 1, p.id, `คืนเงินต้น ฿${pr.toLocaleString()} + ดอกเบี้ย ฿${intr.toLocaleString()}`, intr, '', pr, 0);
                 } else if (newStatus === 'ออกก่อนกำหนด') {
-                    addTransaction('รายรับ', `ออกก่อนกำหนด: ${p.model}`, p.principal, 1, p.id);
+                    const pr = Number(p.principal) || 0;
+                    addTransaction('รายรับ', `ออกก่อนกำหนด: ${p.model}`, pr, 1, p.id, 'คืนเงินต้น (ไม่มีดอกเบี้ย)', 0, '', pr, 0);
                 }
                 showToast(`อัปเดตสถานะเป็น ${newStatus}`);
                 syncToCalendar({ ...p, status: newStatus });
@@ -1667,7 +1907,7 @@ body.gx-crystal::after { opacity: 1; }
                                             <div className="text-gray-500">เริ่ม: {p.startDate || '-'}</div>
                                             <div className={`font-bold mt-1 ${isForfeit ? 'text-red-600' : isYellow ? 'text-yellow-700' : 'text-gray-800'}`}>
                                                 {ACTIVE_STATUS.includes(p.status)
-                                                    ? <input key={p.id + p.dueDate} type="date" defaultValue={p.dueDate} title="เปลี่ยนวันครบกำหนด (ปฏิทินจะอัปเดตตาม)" onBlur={e => { if (e.target.value && e.target.value !== p.dueDate) handleExtendDueDate(p.id, e.target.value); }} className={`border rounded p-1 text-xs font-bold bg-white ${isOverdue ? 'text-yellow-700 border-yellow-400' : 'text-gray-800'}`} />
+                                                    ? <input type="date" value={p.dueDate || ''} title="เปลี่ยนวันครบกำหนด (ปฏิทินจะอัปเดตตาม)" onChange={e => { const v = e.target.value; if (/^\d{4}-\d{2}-\d{2}$/.test(v) && v !== p.dueDate) handleExtendDueDate(p.id, v); }} className={`border rounded p-1 text-xs font-bold bg-white ${isOverdue ? 'text-yellow-700 border-yellow-400' : 'text-gray-800'}`} />
                                                     : p.dueDate}
                                             </div>
                                         </td>
@@ -1733,9 +1973,9 @@ body.gx-crystal::after { opacity: 1; }
                             </div>, document.body);
                     })()}
 
-                    {editTarget && (
-                        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => setEditTarget(null)}>
-                            <form onSubmit={saveEdit} className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6 space-y-4" onClick={e => e.stopPropagation()}>
+                    {editTarget && ReactDOM.createPortal(
+                        <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center p-4" onClick={() => setEditTarget(null)}>
+                            <form onSubmit={saveEdit} className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6 space-y-4 modal-enter" onClick={e => e.stopPropagation()}>
                                 <h3 className="text-lg font-bold text-gray-800"><i className="fas fa-edit text-blue-600 mr-2"></i>แก้ไขรายการจำนำ <span className="font-mono text-purple-600">{editTarget.id}</span></h3>
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     <div><label className="text-xs text-gray-500">ชื่อลูกค้าผู้จำนำ</label><input required value={editForm.name} onChange={e => setEditForm({...editForm, name: e.target.value})} className="w-full border p-2.5 rounded-xl text-sm" /></div>
@@ -1754,12 +1994,13 @@ body.gx-crystal::after { opacity: 1; }
                                     <button type="submit" className="flex-1 bg-blue-600 text-white font-bold py-2.5 rounded-xl hover:bg-blue-700 shadow-md">บันทึกการแก้ไข</button>
                                 </div>
                             </form>
-                        </div>
+                        </div>,
+                        document.body
                     )}
 
-                    {renewTarget && (
-                        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => setRenewTarget(null)}>
-                            <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4" onClick={e => e.stopPropagation()}>
+                    {renewTarget && ReactDOM.createPortal(
+                        <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center p-4" onClick={() => setRenewTarget(null)}>
+                            <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4 modal-enter" onClick={e => e.stopPropagation()}>
                                 <h3 className="text-lg font-bold text-gray-800"><i className="fas fa-sync-alt text-purple-600 mr-2"></i>ต่อดอก {renewTarget.id}</h3>
                                 <div className="text-sm text-gray-600 space-y-1">
                                     <div>ลูกค้า: <b>{renewTarget.name}</b> · {renewTarget.model}</div>
@@ -1778,7 +2019,8 @@ body.gx-crystal::after { opacity: 1; }
                                     <button onClick={confirmRenew} className="flex-1 bg-purple-600 text-white font-bold py-2.5 rounded-xl hover:bg-purple-700 shadow-md">ยืนยันต่อดอก</button>
                                 </div>
                             </div>
-                        </div>
+                        </div>,
+                        document.body
                     )}
                 </div>
             );
@@ -1846,22 +2088,22 @@ body.gx-crystal::after { opacity: 1; }
             );
         };
 
-        // --- 3.6 สมุดบัญชีรายรับ-รายจ่าย (Ledger) ---
-        const TransactionTab = ({ transactions, setTransactions, onPrint, showToast, inventory, sales }) => {
+        // --- 3.6 สมุดบัญชีรายรับ-รายจ่าย (Ledger + P&L + ทุน-ขาย-กำไร) ---
+        const TransactionTab = ({ transactions, setTransactions, onPrint, showToast, inventory, sales, taxConfig, onOpenTaxSettings }) => {
             const now = new Date();
             const [selectedMonth, setSelectedMonth] = useState(now.getMonth());
             const [selectedYear, setSelectedYear] = useState(now.getFullYear());
-            const [ledgerTab, setLedgerTab] = useState('all'); // 'all', 'sales', 'pawns' (แยกส่วนรายการจำนำและขายต่อวัน)
-            
+            const [ledgerTab, setLedgerTab] = useState('all'); // 'all', 'sales', 'pawns', 'stock'
+            const [showPnL, setShowPnL] = useState(true);
+
             const [editIdx, setEditIdx] = useState(null);
             const [draft, setDraft] = useState({});
             const [showAdd, setShowAdd] = useState(false);
-            const blank = () => ({ date: dayKey(new Date()), type: 'รายรับ', detail: '', ref: '', amount: '', note: '', profit: '' });
+            const blank = () => ({ date: dayKey(new Date()), type: 'รายรับ', detail: '', ref: '', amount: '', cost: '', vat: '', note: '', profit: '' });
             const [nr, setNr] = useState(blank());
             const inp = 'w-full border rounded-lg p-2 text-sm';
             const setDate = (ymd, base) => { const [y, m, d] = ymd.split('-').map(Number); const nd = new Date(base || new Date()); nd.setFullYear(y, m - 1, d); return nd; };
 
-            // รหัสสินค้าของรายการ: ใช้ที่บันทึกไว้ ถ้าไม่มี (รายการเก่า) ค้นจากสต็อก/บิลขาย
             const skuOf = (r) => {
                 if (r.sku) return r.sku;
                 const it = (inventory || []).find(i => i.id === r.ref); if (it) return it.sku || '';
@@ -1869,25 +2111,25 @@ body.gx-crystal::after { opacity: 1; }
                 if (sl) { const m = (sl.items || []).find(i => r.detail && r.detail.includes(i.name)); return m ? (m.sku || '') : ''; }
                 return '';
             };
+            const saleOf = (r) => (sales || []).find(x => x.id === r.ref) || null;
+
             const ledger = buildLedger(transactions);
             const monthRows = ledger.filter(r => r._d.getMonth() === selectedMonth && r._d.getFullYear() === selectedYear);
-            
-            // กรองตามประเภท Tab เพื่อแยกรายการจำนำออกจากขายหน้าร้าน/งานซ่อม
+            const pnl = summarizePnL(monthRows);
+
             const filteredRows = useMemo(() => {
                 if (ledgerTab === 'sales') {
-                    return monthRows.filter(r => !r.detail.includes('จำนำ') && !r.detail.includes('ไถ่เครื่อง') && !r.detail.includes('ซื้อสินค้าเข้าสต็อก'));
+                    return monthRows.filter(r => r.kind === 'sale' || r.kind === 'repair' || r.kind === 'other_inc' || r.kind === 'other_exp');
                 } else if (ledgerTab === 'pawns') {
-                    return monthRows.filter(r => r.detail.includes('จำนำ') || r.detail.includes('ไถ่เครื่อง'));
+                    return monthRows.filter(r => r.kind === 'pawn_out' || r.kind === 'pawn_renew' || r.kind === 'pawn_redeem');
                 } else if (ledgerTab === 'stock') {
-                    return monthRows.filter(r => r.detail.includes('ซื้อสินค้าเข้าสต็อก'));
+                    return monthRows.filter(r => r.kind === 'stock_buy');
                 }
                 return monthRows;
             }, [monthRows, ledgerTab]);
 
-            const totalIncome = monthRows.reduce((s, r) => s + r.inc, 0);
-            const totalExpense = monthRows.reduce((s, r) => s + r.exp, 0);
-            const netProfit = totalIncome - totalExpense;
-            const monthSalesProfit = monthRows.reduce((s, r) => s + (r.profit || 0), 0); // กำไรจากรายการซื้อขายสินค้า (ราคาขาย-ต้นทุน) เดือนนี้
+            const fPnl = summarizePnL(filteredRows);
+            const fTotalCost = round2(filteredRows.reduce((s, r) => s + ((r.kind === 'sale' || r.kind === 'repair' || r.kind === 'pawn_redeem') && r.cost ? r.cost : 0), 0));
             const todayIncome = ledger.filter(r => dayKey(r._d) === dayKey(now)).reduce((s, r) => s + r.inc, 0);
 
             const days = [];
@@ -1897,14 +2139,42 @@ body.gx-crystal::after { opacity: 1; }
                 if (!g || g.k !== k) { g = { k, d: r._d, items: [] }; days.push(g); }
                 g.items.push(r);
             });
-            days.reverse(); days.forEach(g => g.items.reverse()); // รายการล่าสุดอยู่บนสุด (วันล่าสุด -> เก่า)
+            days.reverse(); days.forEach(g => g.items.reverse());
 
-            const startEdit = (r) => { setEditIdx(r._i); setDraft({ date: dayKey(r._d), detail: r.detail || '', ref: r.ref || '', income: r.inc || '', expense: r.exp || '', note: r.note || '', profit: (r.profit !== null && r.profit !== undefined) ? r.profit : '' }); };
+            const startEdit = (r) => {
+                setEditIdx(r._i);
+                setDraft({
+                    date: dayKey(r._d),
+                    detail: r.detail || '',
+                    ref: r.ref || '',
+                    cost: (r.cost !== null && r.cost !== undefined) ? r.cost : '',
+                    income: r.inc || '',
+                    expense: r.exp || '',
+                    vat: r.vat || '',
+                    note: r.note || '',
+                    profit: (r.profit !== null && r.profit !== undefined) ? r.profit : ''
+                });
+            };
             const saveEdit = (r) => {
                 const inc = parseFloat(draft.income) || 0, exp = parseFloat(draft.expense) || 0;
-                if ((inc > 0) === (exp > 0)) { showToast('กรอกยอดรายรับ หรือ รายจ่าย อย่างใดอย่างหนึ่งเท่านั้น'); return; }
+                if ((inc > 0) === (exp > 0) && !(inc === 0 && exp === 0)) { showToast('กรอกยอดรายรับ หรือ รายจ่าย อย่างใดอย่างหนึ่งเท่านั้น'); return; }
                 const nd = setDate(draft.date, r._d);
-                setTransactions(prev => prev.map((t, i) => i === r._i ? { ...t, date: nd.toLocaleString('th-TH'), rawDate: nd.toISOString(), type: inc > 0 ? 'รายรับ' : 'รายจ่าย', amount: inc > 0 ? inc : exp, detail: draft.detail, ref: draft.ref, note: draft.note, profit: draft.profit !== '' ? (parseFloat(draft.profit) || 0) : null } : t));
+                const costVal = draft.cost !== '' ? (parseFloat(draft.cost) || 0) : null;
+                const vatVal = draft.vat !== '' ? (parseFloat(draft.vat) || 0) : 0;
+                const profitVal = draft.profit !== '' ? (parseFloat(draft.profit) || 0) : (inc > 0 && costVal !== null ? round2(inc - vatVal - costVal) : null);
+                setTransactions(prev => prev.map((t, i) => i === r._i ? {
+                    ...t,
+                    date: nd.toLocaleString('th-TH'),
+                    rawDate: nd.toISOString(),
+                    type: exp > 0 ? 'รายจ่าย' : 'รายรับ',
+                    amount: exp > 0 ? exp : inc,
+                    cost: costVal,
+                    vat: vatVal,
+                    detail: draft.detail,
+                    ref: draft.ref,
+                    note: draft.note,
+                    profit: profitVal
+                } : t));
                 setEditIdx(null);
                 showToast('บันทึกการแก้ไขแล้ว');
             };
@@ -1920,35 +2190,61 @@ body.gx-crystal::after { opacity: 1; }
                 const amount = parseFloat(nr.amount) || 0;
                 if (amount <= 0) { showToast('กรุณากรอกจำนวนเงิน'); return; }
                 const nd = setDate(nr.date);
-                setTransactions(prev => [{ id: nextTs(), date: nd.toLocaleString('th-TH'), rawDate: nd.toISOString(), type: nr.type, detail: nr.detail, amount, qty: '-', ref: nr.ref, note: nr.note, profit: nr.profit !== '' ? (parseFloat(nr.profit) || 0) : null }, ...prev]);
+                const costVal = nr.cost !== '' ? (parseFloat(nr.cost) || 0) : null;
+                const vatVal = nr.vat !== '' ? (parseFloat(nr.vat) || 0) : 0;
+                const profitVal = nr.profit !== '' ? (parseFloat(nr.profit) || 0) : (nr.type === 'รายรับ' && costVal !== null ? round2(amount - vatVal - costVal) : null);
+                setTransactions(prev => [{
+                    id: nextTs(),
+                    date: nd.toLocaleString('th-TH'),
+                    rawDate: nd.toISOString(),
+                    type: nr.type,
+                    detail: nr.detail,
+                    amount,
+                    cost: costVal,
+                    vat: vatVal,
+                    qty: '-',
+                    ref: nr.ref,
+                    note: nr.note,
+                    profit: profitVal
+                }, ...prev]);
                 setNr(blank());
                 setShowAdd(false);
                 showToast('เพิ่มรายการเรียบร้อย');
             };
 
-            const handlePrintSummary = () => onPrint('transaction', { monthStr: `${TH_MONTHS[selectedMonth]} ${selectedYear}`, totalIncome, totalExpense, netProfit, transactions: filteredRows.map(r => ({ ...r, _sku: skuOf(r) })), tabLabel: ({ all: 'รวมทุกรายการ', sales: 'ขายหน้าร้าน / ซ่อม', pawns: 'รับจำนำ / ไถ่ถอน', stock: 'สต็อกสินค้า' })[ledgerTab] || '' });
+            const handlePrintSummary = () => onPrint('transaction', {
+                monthStr: `${TH_MONTHS[selectedMonth]} ${selectedYear}`,
+                pnl,
+                filteredPnl: fPnl,
+                transactions: filteredRows.map(r => ({ ...r, _sku: skuOf(r) })),
+                tabLabel: ({ all: 'รวมทุกรายการ', sales: 'ขายหน้าร้าน / ซ่อม / ค่าใช้จ่ายดำเนินงาน', pawns: 'รับจำนำ / ไถ่ถอน', stock: 'ซื้อสินค้าเข้าสต็อก' })[ledgerTab] || ''
+            });
 
             const cards = [
-                { label: 'วันนี้ขายได้', val: todayIncome, c: 'text-green-600', b: 'border-green-100' },
-                { label: `รายรับรวมเดือน${TH_MONTHS[selectedMonth]}`, val: totalIncome, c: 'text-green-600', b: 'border-green-100' },
-                { label: 'รายจ่ายรวมเดือนนี้', val: totalExpense, c: 'text-red-600', b: 'border-red-100' },
-                { label: 'กำไรสุทธิเดือนนี้', val: netProfit, c: 'text-blue-600', b: 'border-blue-100' },
-                { label: 'กำไรจากการขายสินค้าเดือนนี้', val: monthSalesProfit, c: 'text-purple-600', b: 'border-purple-100' },
+                { label: 'วันนี้ขายได้', val: todayIncome, c: 'text-green-600', b: 'border-green-100', sub: '' },
+                { label: `รายรับรวมเดือน${TH_MONTHS[selectedMonth]}`, val: pnl.totalIncome, c: 'text-green-600', b: 'border-green-100', sub: pnl.totalVatOut > 0 ? `มี VAT ขาย ฿${fmtCompact(pnl.totalVatOut)}` : '' },
+                { label: 'รายจ่ายรวม (เงินสดออก)', val: pnl.totalExpense, c: 'text-red-600', b: 'border-red-100', sub: `ซื้อสต็อก ฿${fmtCompact(pnl.stockBuyExpense)} · จำนำ ฿${fmtCompact(pnl.pawnOutExpense)}` },
+                { label: 'กระแสเงินสด (รับ − จ่าย)', val: pnl.netCashFlow, c: 'text-blue-600', b: 'border-blue-100', sub: 'เงินสดคงเหลือเฉพาะเดือนนี้' },
+                { label: 'กำไรสุทธิจริง (ทางบัญชี)', val: pnl.trueNetProfit, c: pnl.trueNetProfit >= 0 ? 'text-purple-600' : 'text-red-600', b: 'border-purple-200', sub: `ขาย/ซ่อม ฿${fmtCompact(pnl.grossProfit)} + ดอกเบี้ย ฿${fmtCompact(pnl.pawnInterest)}` },
             ];
 
             return (
                 <div className="space-y-6 page-fade-in">
                     <div className="flex flex-wrap justify-between items-end gap-3">
-                        <h2 className="text-2xl font-bold text-gray-800">สมุดบัญชีรายรับ-รายจ่าย</h2>
+                        <div>
+                            <h2 className="text-2xl font-bold text-gray-800">สมุดบัญชีรายรับ-รายจ่าย & งบกำไรขาดทุน</h2>
+                            <p className="text-xs text-gray-500 mt-0.5">แสดงต้นทุน − ราคาขาย − กำไรแยกรายการ และสรุปภาษีมูลค่าเพิ่ม ({taxConfig?.vatMode === 'none' ? 'ไม่คิด VAT' : taxConfig?.vatMode === 'excluded' ? `บวก VAT ${taxConfig?.vatRate || 7}%` : `ราคารวม VAT ${taxConfig?.vatRate || 7}%`})</p>
+                        </div>
                         <div className="flex flex-wrap gap-2">
-                            <select value={selectedMonth} onChange={e => setSelectedMonth(Number(e.target.value))} className="border p-2 rounded-xl bg-white shadow-sm font-medium">
+                            <select value={selectedMonth} onChange={e => setSelectedMonth(Number(e.target.value))} className="border p-2 rounded-xl bg-white shadow-sm font-medium text-sm">
                                 {TH_MONTHS.map((m, i) => <option key={i} value={i}>{m}</option>)}
                             </select>
-                            <select value={selectedYear} onChange={e => setSelectedYear(Number(e.target.value))} className="border p-2 rounded-xl bg-white shadow-sm font-medium">
+                            <select value={selectedYear} onChange={e => setSelectedYear(Number(e.target.value))} className="border p-2 rounded-xl bg-white shadow-sm font-medium text-sm">
                                 {[...Array(5)].map((_, i) => { const y = now.getFullYear() - i; return <option key={y} value={y}>{y}</option>; })}
                             </select>
+                            <button onClick={onOpenTaxSettings} className="bg-white border border-gray-200 text-gray-700 px-3 py-2 rounded-xl font-bold text-sm hover:bg-gray-50 shadow-sm transition" title="ตั้งค่าข้อมูลร้านและ VAT 7%"><i className="fas fa-sliders-h mr-1.5 text-blue-600"></i>ตั้งค่าภาษี/ร้าน</button>
                             <button onClick={() => setShowAdd(!showAdd)} className="bg-blue-600 text-white px-4 py-2 rounded-xl font-bold text-sm hover:bg-blue-700 shadow-sm transition"><i className="fas fa-plus mr-1"></i>เพิ่มรายการ</button>
-                            <button onClick={handlePrintSummary} className="bg-blue-100 text-blue-600 px-3 py-2 rounded-xl hover:bg-blue-200 shadow-sm transition" title="พิมพ์สรุปยอด"><i className="fas fa-print"></i></button>
+                            <button onClick={handlePrintSummary} className="bg-blue-100 text-blue-700 px-3.5 py-2 rounded-xl font-bold text-sm hover:bg-blue-200 shadow-sm transition" title="พิมพ์สมุดบัญชี A4"><i className="fas fa-print mr-1.5"></i>พิมพ์งบ A4</button>
                         </div>
                     </div>
 
@@ -1956,36 +2252,59 @@ body.gx-crystal::after { opacity: 1; }
                         {cards.map(c => (
                             <div key={c.label} className={`bg-white p-4 rounded-2xl shadow-sm border ${c.b}`}>
                                 <p className="text-xs text-gray-500 font-medium mb-1">{c.label}</p>
-                                <h3 className={`text-xl font-bold ${c.c}`}>฿{c.val.toLocaleString()}</h3>
+                                <h3 className={`text-xl font-bold ${c.c}`}>฿{fmtCompact(c.val)}</h3>
+                                {c.sub && <p className="text-[11px] text-gray-400 mt-1 truncate" title={c.sub}>{c.sub}</p>}
                             </div>
                         ))}
                     </div>
 
-                    {/* ปุ่มแยกประเภทรายการบัญชี (แยกส่วนจำนำและขายต่อวัน) */}
-                    <div className="flex bg-gray-200 p-1 rounded-xl w-fit">
-                        <button 
-                            onClick={() => setLedgerTab('all')}
-                            className={`px-4 py-2 text-xs font-bold rounded-lg transition ${ledgerTab === 'all' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
-                        >
+                    {/* กล่องงบกำไรขาดทุนทางบัญชี (P&L) ประจำเดือน */}
+                    <div className="bg-white rounded-2xl shadow-sm border border-purple-100 overflow-hidden">
+                        <button type="button" onClick={() => setShowPnL(!showPnL)} className="w-full px-5 py-3 flex items-center justify-between bg-purple-50/60 hover:bg-purple-50 text-left">
+                            <span className="font-bold text-sm text-purple-900">
+                                <i className="fas fa-chart-line mr-2 text-purple-600"></i>สรุปงบกำไรขาดทุนทางบัญชี & ภาษีขาย ประจำเดือน{TH_MONTHS[selectedMonth]} {selectedYear}
+                            </span>
+                            <span className="text-xs text-purple-700 font-bold">{showPnL ? 'ซ่อน' : 'ดูรายละเอียด'} <i className={`fas fa-chevron-${showPnL ? 'up' : 'down'} ml-1`}></i></span>
+                        </button>
+                        {showPnL && (
+                            <div className="p-4 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                                <div className="bg-slate-50 rounded-xl p-3.5 space-y-1.5 border">
+                                    <div className="font-bold text-gray-700 text-xs uppercase border-b pb-1">1. กำไรจากการขายและงานซ่อม</div>
+                                    <div className="flex justify-between"><span className="text-gray-600">ยอดขาย/ซ่อม (ก่อน VAT)</span><span className="font-bold text-gray-800">฿{fmtMoney(pnl.salesBase)}</span></div>
+                                    <div className="flex justify-between"><span className="text-gray-600">หัก ต้นทุนขาย / อะไหล่ (COGS)</span><span className="font-bold text-amber-700">−฿{fmtMoney(pnl.totalCOGS)}</span></div>
+                                    <div className="flex justify-between border-t pt-1 font-bold"><span className="text-purple-800">กำไรขั้นต้น (ขาย − ทุน)</span><span className={pnl.grossProfit >= 0 ? 'text-green-700' : 'text-red-600'}>฿{fmtMoney(pnl.grossProfit)}</span></div>
+                                </div>
+                                <div className="bg-slate-50 rounded-xl p-3.5 space-y-1.5 border">
+                                    <div className="font-bold text-gray-700 text-xs uppercase border-b pb-1">2. รายได้อื่น & ค่าใช้จ่ายดำเนินงาน</div>
+                                    <div className="flex justify-between"><span className="text-gray-600">บวก ดอกเบี้ยรับจำนำ (ต่อดอก/ไถ่)</span><span className="font-bold text-green-700">+฿{fmtMoney(pnl.pawnInterest)}</span></div>
+                                    <div className="flex justify-between"><span className="text-gray-600">บวก รายได้อื่นๆ</span><span className="font-bold text-green-700">+฿{fmtMoney(pnl.otherIncome)}</span></div>
+                                    <div className="flex justify-between"><span className="text-gray-600">หัก ค่าใช้จ่ายดำเนินงาน (เช่า/น้ำ/ไฟฯ)</span><span className="font-bold text-red-600">−฿{fmtMoney(pnl.operatingExpense)}</span></div>
+                                    <div className="flex justify-between border-t pt-1 font-extrabold"><span className="text-blue-900">กำไรสุทธิทางบัญชี</span><span className={pnl.trueNetProfit >= 0 ? 'text-purple-700' : 'text-red-600'}>฿{fmtMoney(pnl.trueNetProfit)}</span></div>
+                                </div>
+                                <div className="bg-slate-50 rounded-xl p-3.5 space-y-1.5 border">
+                                    <div className="font-bold text-gray-700 text-xs uppercase border-b pb-1">3. ภาษี & รายการหมุนเวียน (ไม่หักกำไรซ้ำ)</div>
+                                    <div className="flex justify-between"><span className="text-gray-600">ภาษีขาย (Output VAT 7%)</span><span className="font-bold text-blue-700">฿{fmtMoney(pnl.totalVatOut)}</span></div>
+                                    <div className="flex justify-between"><span className="text-gray-600">ซื้อสินค้าเข้าสต็อก (สินทรัพย์)</span><span className="font-medium text-gray-700">฿{fmtMoney(pnl.stockBuyExpense)}</span></div>
+                                    <div className="flex justify-between"><span className="text-gray-600">ปล่อยเงินรับจำนำ (ลูกหนี้)</span><span className="font-medium text-gray-700">฿{fmtMoney(pnl.pawnOutExpense)}</span></div>
+                                    <div className="text-[11px] text-gray-500 pt-1 border-t">*ซื้อสต็อกจะถูกหักเป็น "ต้นทุนขาย" เมื่อขายสินค้าออกจริง เพื่อไม่ให้หักต้นทุนซ้ำซ้อน</div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* ปุ่มแยกประเภทรายการบัญชี */}
+                    <div className="flex flex-wrap bg-gray-200 p-1 rounded-xl w-fit gap-1">
+                        <button onClick={() => setLedgerTab('all')} className={`px-4 py-2 text-xs font-bold rounded-lg transition ${ledgerTab === 'all' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}>
                             <i className="fas fa-list mr-1.5"></i>รวมทุกรายการ
                         </button>
-                        <button 
-                            onClick={() => setLedgerTab('sales')}
-                            className={`px-4 py-2 text-xs font-bold rounded-lg transition ${ledgerTab === 'sales' ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
-                        >
-                            <i className="fas fa-shopping-bag mr-1.5"></i>รายการขายหน้าร้าน / ซ่อม
+                        <button onClick={() => setLedgerTab('sales')} className={`px-4 py-2 text-xs font-bold rounded-lg transition ${ledgerTab === 'sales' ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}>
+                            <i className="fas fa-shopping-bag mr-1.5"></i>รายการขายหน้าร้าน / ซ่อม / จ่ายอื่นๆ
                         </button>
-                        <button 
-                            onClick={() => setLedgerTab('pawns')}
-                            className={`px-4 py-2 text-xs font-bold rounded-lg transition ${ledgerTab === 'pawns' ? 'bg-white text-purple-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
-                        >
+                        <button onClick={() => setLedgerTab('pawns')} className={`px-4 py-2 text-xs font-bold rounded-lg transition ${ledgerTab === 'pawns' ? 'bg-white text-purple-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}>
                             <i className="fas fa-hand-holding-usd mr-1.5"></i>รายการรับจำนำ / ไถ่ถอน
                         </button>
-                        <button 
-                            onClick={() => setLedgerTab('stock')}
-                            className={`px-4 py-2 text-xs font-bold rounded-lg transition ${ledgerTab === 'stock' ? 'bg-white text-amber-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
-                        >
-                            <i className="fas fa-boxes mr-1.5"></i>รายการสต็อกสินค้า
+                        <button onClick={() => setLedgerTab('stock')} className={`px-4 py-2 text-xs font-bold rounded-lg transition ${ledgerTab === 'stock' ? 'bg-white text-amber-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}>
+                            <i className="fas fa-boxes mr-1.5"></i>รายการซื้อสต็อกเข้าคลัง
                         </button>
                     </div>
 
@@ -1993,34 +2312,44 @@ body.gx-crystal::after { opacity: 1; }
                         <form onSubmit={addRow} className="bg-white p-4 rounded-2xl border border-blue-200 grid grid-cols-2 md:grid-cols-6 gap-3 items-end shadow-sm modal-enter">
                             <div><label className="text-xs text-gray-500">วันที่</label><input type="date" required value={nr.date} onChange={e => setNr({ ...nr, date: e.target.value })} className={inp} /></div>
                             <div><label className="text-xs text-gray-500">ประเภท</label><select value={nr.type} onChange={e => setNr({ ...nr, type: e.target.value })} className={inp}><option>รายรับ</option><option>รายจ่าย</option></select></div>
-                            <div className="col-span-2"><label className="text-xs text-gray-500">รายการ (คำอธิบาย)</label><input required value={nr.detail} onChange={e => setNr({ ...nr, detail: e.target.value })} className={inp} /></div>
+                            <div className="col-span-2"><label className="text-xs text-gray-500">รายการ (คำอธิบาย)</label><input required value={nr.detail} onChange={e => setNr({ ...nr, detail: e.target.value })} className={inp} placeholder="เช่น ค่าเช่าร้าน, ขายสินค้า..." /></div>
                             <div><label className="text-xs text-gray-500">เลขที่เอกสารอ้างอิง</label><input value={nr.ref} onChange={e => setNr({ ...nr, ref: e.target.value })} className={inp} /></div>
                             <div><label className="text-xs text-gray-500">จำนวนเงิน (บาท)</label><input type="number" required min="0" step="any" value={nr.amount} onChange={e => setNr({ ...nr, amount: e.target.value })} className={inp} /></div>
-                            <div><label className="text-xs text-gray-500">กำไร (บาท) (ถ้ามี)</label><input type="number" step="any" placeholder="-" value={nr.profit} onChange={e => setNr({ ...nr, profit: e.target.value })} className={inp} /></div>
-                            <div className="col-span-2 md:col-span-4"><label className="text-xs text-gray-500">หมายเหตุ</label><input value={nr.note} onChange={e => setNr({ ...nr, note: e.target.value })} className={inp} /></div>
+                            <div><label className="text-xs text-gray-500">ต้นทุน (บาท) (ถ้ามี)</label><input type="number" min="0" step="any" placeholder="-" value={nr.cost} onChange={e => setNr({ ...nr, cost: e.target.value })} className={inp} /></div>
+                            <div><label className="text-xs text-gray-500">VAT 7% (บาท)</label><input type="number" min="0" step="any" placeholder="0" value={nr.vat} onChange={e => setNr({ ...nr, vat: e.target.value })} className={inp} /></div>
+                            <div><label className="text-xs text-gray-500">กำไร (ว่าง=คำนวณเอง)</label><input type="number" step="any" placeholder="อัตโนมัติ" value={nr.profit} onChange={e => setNr({ ...nr, profit: e.target.value })} className={inp} /></div>
+                            <div className="col-span-2"><label className="text-xs text-gray-500">หมายเหตุ</label><input value={nr.note} onChange={e => setNr({ ...nr, note: e.target.value })} className={inp} /></div>
                             <button type="submit" className="bg-green-600 text-white py-2.5 rounded-xl font-bold text-sm hover:bg-green-700 shadow">บันทึก</button>
                         </form>
                     )}
 
                     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
                         <div className="overflow-x-auto">
-                            <table className="w-full text-left min-w-[960px]">
+                            <table className="w-full text-left min-w-[1120px]">
                                 <thead className="bg-slate-50 text-slate-600 text-sm">
                                     <tr>
-                                        <th className="p-3.5 border-b">วันที่</th><th className="p-3.5 border-b">รหัสสินค้า / เลขอ้างอิง</th><th className="p-3.5 border-b">รายการ (คำอธิบาย)</th>
-                                        <th className="p-3.5 border-b text-right">รายรับ (บาท)</th><th className="p-3.5 border-b text-right">รายจ่าย (บาท)</th><th className="p-3.5 border-b text-right">กำไร (บาท)</th>
-                                        <th className="p-3.5 border-b">หมายเหตุ</th><th className="p-3.5 border-b text-center">จัดการ</th>
+                                        <th className="p-3.5 border-b">วันที่</th>
+                                        <th className="p-3.5 border-b">รหัสสินค้า / อ้างอิง</th>
+                                        <th className="p-3.5 border-b">รายการ (ทุน − ขาย − กำไร)</th>
+                                        <th className="p-3.5 border-b text-right">ต้นทุน (บาท)</th>
+                                        <th className="p-3.5 border-b text-right">รายรับ/ขาย (บาท)</th>
+                                        <th className="p-3.5 border-b text-right">รายจ่าย (บาท)</th>
+                                        <th className="p-3.5 border-b text-right">กำไร (บาท)</th>
+                                        <th className="p-3.5 border-b">หมายเหตุ</th>
+                                        <th className="p-3.5 border-b text-center">จัดการ</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {days.length === 0 && <tr><td colSpan={8} className="p-8 text-center text-gray-400">ไม่มีรายการในส่วนนี้</td></tr>}
+                                    {days.length === 0 && <tr><td colSpan={9} className="p-8 text-center text-gray-400">ไม่มีรายการในส่วนนี้</td></tr>}
                                     {days.map(g => {
-                                        const dInc = g.items.reduce((s, r) => s + r.inc, 0), dExp = g.items.reduce((s, r) => s + r.exp, 0);
-                                        const dProfit = g.items.reduce((s, r) => s + (r.profit || 0), 0);
+                                        const dInc = round2(g.items.reduce((s, r) => s + r.inc, 0));
+                                        const dExp = round2(g.items.reduce((s, r) => s + r.exp, 0));
+                                        const dCost = round2(g.items.reduce((s, r) => s + ((r.kind === 'sale' || r.kind === 'repair' || r.kind === 'pawn_redeem') && r.cost ? r.cost : 0), 0));
+                                        const dProfit = round2(g.items.reduce((s, r) => s + (r.profit || 0), 0));
                                         return (
                                             <React.Fragment key={g.k}>
                                                 <tr className="bg-blue-100 border-t-4 border-blue-300 text-sm font-bold text-blue-900">
-                                                    <td colSpan={8} className="p-3">
+                                                    <td colSpan={9} className="p-3">
                                                         <i className="fas fa-calendar-day mr-2"></i>{g.d.toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
                                                         <span className="ml-3 text-xs font-medium text-blue-700">({g.items.length} รายการ)</span>
                                                     </td>
@@ -2030,6 +2359,7 @@ body.gx-crystal::after { opacity: 1; }
                                                         <td className="p-2"><input type="date" value={draft.date} onChange={e => setDraft({ ...draft, date: e.target.value })} className={inp} /></td>
                                                         <td className="p-2"><input value={draft.ref} onChange={e => setDraft({ ...draft, ref: e.target.value })} className={inp} /></td>
                                                         <td className="p-2"><input value={draft.detail} onChange={e => setDraft({ ...draft, detail: e.target.value })} className={inp} /></td>
+                                                        <td className="p-2"><input type="number" min="0" step="any" placeholder="-" value={draft.cost} onChange={e => setDraft({ ...draft, cost: e.target.value })} className={inp + ' text-right'} /></td>
                                                         <td className="p-2"><input type="number" min="0" step="any" value={draft.income} onChange={e => setDraft({ ...draft, income: e.target.value })} className={inp + ' text-right'} /></td>
                                                         <td className="p-2"><input type="number" min="0" step="any" value={draft.expense} onChange={e => setDraft({ ...draft, expense: e.target.value })} className={inp + ' text-right'} /></td>
                                                         <td className="p-2"><input type="number" step="any" placeholder="-" value={draft.profit} onChange={e => setDraft({ ...draft, profit: e.target.value })} className={inp + ' text-right'} /></td>
@@ -2044,37 +2374,63 @@ body.gx-crystal::after { opacity: 1; }
                                                         <td className="p-3.5 text-gray-500 whitespace-nowrap"><div className="font-bold text-gray-700">{r._d.toLocaleDateString('th-TH', { day: '2-digit', month: '2-digit', year: 'numeric' })}</div><div className="text-xs text-gray-400">{r._d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.</div></td>
                                                         <td className="p-3.5 whitespace-nowrap font-mono text-xs">{skuOf(r) && <div className="font-bold text-gray-800">{skuOf(r)}</div>}<div className="text-gray-400">{r.ref || (skuOf(r) ? '' : '-')}</div></td>
                                                         <td className="p-3.5 font-medium">
-                                                            {r.detail}
-                                                            {r.qty && r.qty !== '-' ? <span className="text-xs text-gray-400"> (x{r.qty})</span> : null}
+                                                            <div>
+                                                                {r.detail}
+                                                                {r.qty && r.qty !== '-' ? <span className="text-xs text-gray-400"> (x{r.qty})</span> : null}
+                                                            </div>
+                                                            {(r.kind === 'sale' || r.kind === 'repair') && r.cost !== null && r.profit !== null && (
+                                                                <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px]">
+                                                                    <span className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 font-semibold">ทุน ฿{fmtCompact(r.cost)}</span>
+                                                                    <span className="text-gray-400">→</span>
+                                                                    <span className="px-1.5 py-0.5 rounded bg-green-50 text-green-800 border border-green-200 font-semibold">ขาย ฿{fmtCompact(r.inc)}</span>
+                                                                    {r.vat > 0 && <span className="px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 font-semibold">VAT ฿{fmtCompact(r.vat)}</span>}
+                                                                    <span className="text-gray-400">=</span>
+                                                                    <span className={`px-1.5 py-0.5 rounded border font-bold ${r.profit >= 0 ? 'bg-purple-50 text-purple-800 border-purple-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
+                                                                        กำไร {r.profit >= 0 ? '+' : ''}฿{fmtCompact(r.profit)}
+                                                                    </span>
+                                                                </div>
+                                                            )}
                                                         </td>
-                                                        
-                                                        <td className="p-3.5 text-right font-bold text-green-600">{r.inc ? r.inc.toLocaleString() : ''}</td>
-                                                        <td className="p-3.5 text-right font-bold text-red-600">{r.exp ? r.exp.toLocaleString() : ''}</td>
-                                                        <td className="p-3.5 text-right font-bold text-purple-600">{(r.profit !== null && r.profit !== undefined) ? r.profit.toLocaleString() : '-'}</td>
-                                                        <td className="p-3.5 text-gray-500">{r.note}</td>
+                                                        <td className="p-3.5 text-right font-semibold text-amber-700 whitespace-nowrap">
+                                                            {(r.kind === 'sale' || r.kind === 'repair' || r.kind === 'pawn_redeem') && r.cost !== null ? fmtCompact(r.cost) : <span className="text-gray-300">-</span>}
+                                                        </td>
+                                                        <td className="p-3.5 text-right font-bold text-green-600 whitespace-nowrap">
+                                                            {r.inc ? fmtCompact(r.inc) : (r.kind === 'sale' ? '0' : '')}
+                                                            {r.vat > 0 && <div className="text-[10px] font-normal text-blue-600">VAT {fmtCompact(r.vat)}</div>}
+                                                        </td>
+                                                        <td className="p-3.5 text-right font-bold text-red-600 whitespace-nowrap">{r.exp ? fmtCompact(r.exp) : ''}</td>
+                                                        <td className={`p-3.5 text-right font-bold whitespace-nowrap ${r.profit !== null && r.profit < 0 ? 'text-red-600' : 'text-purple-600'}`}>
+                                                            {(r.profit !== null && r.profit !== undefined) ? fmtCompact(r.profit) : <span className="text-gray-300">-</span>}
+                                                        </td>
+                                                        <td className="p-3.5 text-gray-500 text-xs">{r.note}</td>
                                                         <td className="p-3.5 text-center whitespace-nowrap">
+                                                            {r.kind === 'sale' && saleOf(r) && (
+                                                                <button onClick={() => onPrint('sale', saleOf(r))} className="text-emerald-600 hover:bg-emerald-100 p-2 rounded-lg" title="พิมพ์ใบเสร็จ/ใบกำกับภาษี"><i className="fas fa-receipt"></i></button>
+                                                            )}
                                                             <button onClick={() => startEdit(r)} className="text-blue-600 hover:bg-blue-100 p-2 rounded-lg" title="แก้ไข"><i className="fas fa-edit"></i></button>
                                                             <button onClick={() => removeRow(r)} className="text-red-500 hover:bg-red-100 p-2 rounded-lg" title="ลบ"><i className="fas fa-trash"></i></button>
                                                         </td>
                                                     </tr>
                                                 ))}
                                                 <tr className="bg-amber-100 border-b-2 border-amber-300 text-sm font-bold">
-                                                    <td className="p-3.5 text-amber-800" colSpan={3}>สรุปวันที่ {g.d.toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' })} — รายรับ ฿{dInc.toLocaleString()} · รายจ่าย ฿{dExp.toLocaleString()}</td>
-                                                    <td className="p-3.5 text-right text-green-700">{dInc.toLocaleString()}</td>
-                                                    <td className="p-3.5 text-right text-red-700">{dExp.toLocaleString()}</td>
-                                                    <td className="p-3.5 text-right text-purple-700">{dProfit.toLocaleString()}</td>
-                                                    <td className="p-3.5 text-amber-800" colSpan={2}>สุทธิ ฿{(dInc - dExp).toLocaleString()}</td>
+                                                    <td className="p-3.5 text-amber-800" colSpan={3}>สรุปวันที่ {g.d.toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' })} — ทุนขาย ฿{fmtCompact(dCost)} · รับ ฿{fmtCompact(dInc)} · จ่าย ฿{fmtCompact(dExp)}</td>
+                                                    <td className="p-3.5 text-right text-amber-800">{fmtCompact(dCost)}</td>
+                                                    <td className="p-3.5 text-right text-green-700">{fmtCompact(dInc)}</td>
+                                                    <td className="p-3.5 text-right text-red-700">{fmtCompact(dExp)}</td>
+                                                    <td className={`p-3.5 text-right ${dProfit >= 0 ? 'text-purple-700' : 'text-red-700'}`}>{fmtCompact(dProfit)}</td>
+                                                    <td className="p-3.5 text-amber-800 text-xs" colSpan={2}>กระแสเงินสด ฿{fmtCompact(dInc - dExp)}</td>
                                                 </tr>
-                                                <tr><td colSpan={8} className="h-3 bg-slate-50"></td></tr>
+                                                <tr><td colSpan={9} className="h-3 bg-slate-50"></td></tr>
                                             </React.Fragment>
                                         );
                                     })}
                                     <tr className="bg-blue-50 text-sm font-extrabold">
-                                        <td className="p-3.5 text-blue-800" colSpan={3}>รวมทั้งเดือน {TH_MONTHS[selectedMonth]} {selectedYear} — รายรับรวม ฿{totalIncome.toLocaleString()}</td>
-                                        <td className="p-3.5 text-right text-green-700">{totalIncome.toLocaleString()}</td>
-                                        <td className="p-3.5 text-right text-red-700"></td>
-                                        <td className="p-3.5 text-right text-purple-700">{monthSalesProfit.toLocaleString()}</td>
-                                        <td colSpan={2}></td>
+                                        <td className="p-3.5 text-blue-800" colSpan={3}>รวมทั้งเดือน {TH_MONTHS[selectedMonth]} {selectedYear} ({filteredRows.length} รายการ)</td>
+                                        <td className="p-3.5 text-right text-amber-800">{fmtCompact(fTotalCost)}</td>
+                                        <td className="p-3.5 text-right text-green-700">{fmtCompact(fPnl.totalIncome)}</td>
+                                        <td className="p-3.5 text-right text-red-700">{fmtCompact(fPnl.totalExpense)}</td>
+                                        <td className={`p-3.5 text-right ${fPnl.totalRowProfit >= 0 ? 'text-purple-700' : 'text-red-700'}`}>{fmtCompact(fPnl.totalRowProfit)}</td>
+                                        <td className="p-3.5 text-blue-900 text-xs" colSpan={2}>กำไรสุทธิจริง ฿{fmtCompact(pnl.trueNetProfit)}</td>
                                     </tr>
                                 </tbody>
                             </table>
@@ -2084,8 +2440,8 @@ body.gx-crystal::after { opacity: 1; }
             );
         };
 
-        // --- 3.7 ขายหน้าร้าน (POS) ---
-        const POSTab = ({ inventory, setInventory, addTransaction, addSale, showToast, onPrint }) => {
+        // --- 3.7 ขายหน้าร้าน (POS + คำนวณ VAT 7% & ต้นทุน-กำไร) ---
+        const POSTab = ({ inventory, setInventory, addTransaction, addSale, showToast, onPrint, taxConfig, onOpenTaxSettings }) => {
             const [cat, setCat] = useState('อะไหล่');
             const cats = [
                 { key: 'อะไหล่', icon: 'fa-microchip', match: c => c === 'อะไหล่' },
@@ -2095,6 +2451,15 @@ body.gx-crystal::after { opacity: 1; }
             const shown = inventory.filter(i => cats.find(c => c.key === cat).match(i.category));
             const [cart, setCart] = useState([]);
             const [galleryItem, setGalleryItem] = useState(null);
+            const [cartVatMode, setCartVatMode] = useState(taxConfig?.vatMode || 'included');
+            const [showCustomerBox, setShowCustomerBox] = useState(false);
+            const [customer, setCustomer] = useState({ name: '', taxId: '', address: '' });
+
+            useEffect(() => {
+                if (taxConfig?.vatMode) setCartVatMode(taxConfig.vatMode);
+            }, [taxConfig?.vatMode]);
+
+            const vatRate = Number(taxConfig?.vatRate) || 7;
 
             const addToCart = (item) => {
                 if (item.qty <= 0) { alert('สินค้าหมด'); return; }
@@ -2108,7 +2473,6 @@ body.gx-crystal::after { opacity: 1; }
                 }
             };
 
-            // แก้ไขราคาขายต่อหน่วยในตะกร้าสินค้าก่อนกดชำระเงิน
             const updateCartPrice = (id, newPrice) => {
                 const price = parseFloat(newPrice) || 0;
                 setCart(cart.map(c => c.id === id ? { ...c, price } : c));
@@ -2119,7 +2483,6 @@ body.gx-crystal::after { opacity: 1; }
                 if (!item) return;
                 const invItem = inventory.find(i => i.id === id);
                 const nextQty = item.qty + delta;
-                
                 if (nextQty <= 0) {
                     setCart(cart.filter(c => c.id !== id));
                 } else {
@@ -2128,29 +2491,66 @@ body.gx-crystal::after { opacity: 1; }
                 }
             };
 
+            // คำนวณยอดก่อน VAT, VAT 7%, ยอดรวม, ต้นทุน และกำไรสุทธิแยกรายการ
+            const cartCalc = useMemo(() => {
+                const items = cart.map(it => {
+                    const lineRaw = (Number(it.price) || 0) * (Number(it.qty) || 0);
+                    const v = calcVat(lineRaw, cartVatMode, vatRate);
+                    const unitV = calcVat(Number(it.price) || 0, cartVatMode, vatRate);
+                    const costTotal = round2((Number(it.cost) || 0) * (Number(it.qty) || 0));
+                    const profit = round2(v.base - costTotal);
+                    return { ...it, unitBase: unitV.base, unitVat: unitV.vat, lineBase: v.base, lineVat: v.vat, lineTotal: v.total, costTotal, profit };
+                });
+                const subtotal = round2(items.reduce((s, x) => s + x.lineBase, 0));
+                const vat = round2(items.reduce((s, x) => s + x.lineVat, 0));
+                const total = round2(items.reduce((s, x) => s + x.lineTotal, 0));
+                const totalCost = round2(items.reduce((s, x) => s + x.costTotal, 0));
+                const totalProfit = round2(items.reduce((s, x) => s + x.profit, 0));
+                return { items, subtotal, vat, total, totalCost, totalProfit };
+            }, [cart, cartVatMode, vatRate]);
+
             const checkout = () => {
-                if (cart.length === 0) return;
-                const total = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
+                if (cartCalc.items.length === 0) return;
                 const saleId = `INV-${Date.now()}`;
-                
-                cart.forEach(cartItem => {
-                    // ตัดสต็อก (เครื่องที่เหลือ 0 จะถูกลบพร้อมรูปโดยตัวกวาดใน App)
-                    setInventory(prev => prev.map(i => i.id === cartItem.id ? { ...i, qty: i.qty - cartItem.qty } : i));
-                    const itemProfit = (cartItem.price - (cartItem.cost || 0)) * cartItem.qty; // ราคาขาย - ราคาทุน
-                    addTransaction('รายรับ', `ขายสินค้า (POS): ${cartItem.name}`, cartItem.price * cartItem.qty, cartItem.qty, saleId, '', itemProfit, cartItem.sku || '');
+
+                cartCalc.items.forEach(ci => {
+                    setInventory(prev => prev.map(i => i.id === ci.id ? { ...i, qty: i.qty - ci.qty } : i));
+                    const vatNote = ci.lineVat > 0 ? ` | VAT ${vatRate}% ฿${fmtCompact(ci.lineVat)}` : '';
+                    const note = `ทุน ฿${fmtCompact(ci.costTotal)} → ขาย ฿${fmtCompact(ci.lineTotal)}${vatNote} = กำไร ฿${fmtCompact(ci.profit)}`;
+                    addTransaction('รายรับ', `ขายสินค้า (POS): ${ci.name}`, ci.lineTotal, ci.qty, saleId, note, ci.profit, ci.sku || '', ci.costTotal, ci.lineVat);
                 });
 
-                const sale = { id: saleId, date: new Date().toISOString(), total, items: cart };
+                const hasCustomer = customer.name.trim() || customer.taxId.trim() || customer.address.trim();
+                const sale = {
+                    id: saleId,
+                    date: new Date().toISOString(),
+                    subtotal: cartCalc.subtotal,
+                    vat: cartCalc.vat,
+                    total: cartCalc.total,
+                    totalCost: cartCalc.totalCost,
+                    totalProfit: cartCalc.totalProfit,
+                    vatMode: cartVatMode,
+                    vatRate,
+                    customer: hasCustomer ? { name: customer.name.trim(), taxId: customer.taxId.trim(), address: customer.address.trim() } : null,
+                    items: cartCalc.items
+                };
                 addSale(sale);
                 onPrint('sale', sale);
                 setCart([]);
-                showToast(`รับชำระเงิน ฿${total.toLocaleString()} สำเร็จ!`);
+                setCustomer({ name: '', taxId: '', address: '' });
+                setShowCustomerBox(false);
+                showToast(`รับชำระเงิน ฿${fmtCompact(cartCalc.total)} สำเร็จ! (กำไรสุทธิ ฿${fmtCompact(cartCalc.totalProfit)})`);
             };
 
             return (
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 page-fade-in">
                     <div className="lg:col-span-2 space-y-4">
-                        <h2 className="text-2xl font-bold text-gray-800">ขายหน้าร้าน (POS)</h2>
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                            <h2 className="text-2xl font-bold text-gray-800">ขายหน้าร้าน (POS)</h2>
+                            <button type="button" onClick={onOpenTaxSettings} className="text-xs bg-white border border-gray-200 px-3 py-2 rounded-xl font-bold text-gray-700 hover:bg-gray-50 shadow-sm">
+                                <i className="fas fa-file-invoice-dollar text-blue-600 mr-1.5"></i>ตั้งค่าใบเสร็จ / VAT
+                            </button>
+                        </div>
                         <div className="flex flex-wrap gap-2">
                             {cats.map(c => (
                                 <button key={c.key} onClick={() => setCat(c.key)} className={`px-4 py-2.5 rounded-xl font-bold text-sm border transition ${cat === c.key ? 'bg-blue-600 text-white border-blue-600 shadow-sm' : 'bg-white text-gray-600 hover:bg-blue-50'}`}>
@@ -2185,20 +2585,43 @@ body.gx-crystal::after { opacity: 1; }
                         </div>
                     </div>
 
-                    {/* ตะกร้าสินค้าแบบแก้ไขราคาขายได้ */}
+                    {/* ตะกร้าสินค้า + ตัวเลือก VAT 7% + แสดง ทุน-ขาย-กำไร */}
                     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 flex flex-col h-[calc(100vh-120px)] sticky top-4">
                         <div className="p-4 border-b bg-slate-50 font-bold text-lg text-gray-800 flex justify-between items-center rounded-t-2xl">
                             <span><i className="fas fa-shopping-cart text-blue-600 mr-2"></i>ตะกร้าสินค้า</span>
                             <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-full font-bold">{cart.length} รายการ</span>
                         </div>
 
+                        {/* ตัวเลือกโหมด VAT 7% & ข้อมูลลูกค้าใบกำกับภาษี */}
+                        <div className="px-4 py-2.5 border-b bg-blue-50/40 space-y-2 text-xs">
+                            <div className="flex items-center justify-between gap-2">
+                                <span className="font-bold text-gray-700"><i className="fas fa-percent mr-1 text-blue-600"></i>ภาษี (VAT {vatRate}%):</span>
+                                <select value={cartVatMode} onChange={e => setCartVatMode(e.target.value)} className="border rounded-lg px-2 py-1 text-xs font-bold bg-white">
+                                    <option value="included">ราคารวม VAT {vatRate}%</option>
+                                    <option value="excluded">บวก VAT {vatRate}% เพิ่ม</option>
+                                    <option value="none">ไม่คิด VAT</option>
+                                </select>
+                            </div>
+                            <button type="button" onClick={() => setShowCustomerBox(!showCustomerBox)} className="text-blue-700 font-bold hover:underline">
+                                <i className={`fas fa-${showCustomerBox ? 'chevron-up' : 'user-plus'} mr-1`}></i>
+                                {showCustomerBox ? 'ซ่อนข้อมูลลูกค้า' : 'ระบุชื่อ/เลขผู้เสียภาษีลูกค้า (ใบกำกับภาษีเต็มรูป)'}
+                            </button>
+                            {showCustomerBox && (
+                                <div className="space-y-1.5 pt-1">
+                                    <input value={customer.name} onChange={e => setCustomer({ ...customer, name: e.target.value })} placeholder="ชื่อลูกค้า / บริษัท" className="w-full border rounded-lg px-2 py-1.5 text-xs bg-white" />
+                                    <input value={customer.taxId} onChange={e => setCustomer({ ...customer, taxId: e.target.value })} placeholder="เลขประจำตัวผู้เสียภาษี (13 หลัก)" className="w-full border rounded-lg px-2 py-1.5 text-xs bg-white font-mono" />
+                                    <input value={customer.address} onChange={e => setCustomer({ ...customer, address: e.target.value })} placeholder="ที่อยู่ลูกค้า" className="w-full border rounded-lg px-2 py-1.5 text-xs bg-white" />
+                                </div>
+                            )}
+                        </div>
+
                         <div className="flex-1 p-4 overflow-y-auto space-y-3">
-                            {cart.length === 0 ? (
+                            {cartCalc.items.length === 0 ? (
                                 <div className="text-center text-gray-400 mt-16 space-y-2">
                                     <i className="fas fa-basket-shopping text-4xl opacity-30"></i>
                                     <p className="text-sm">ยังไม่มีสินค้าในตะกร้า</p>
                                 </div>
-                            ) : cart.map(item => (
+                            ) : cartCalc.items.map(item => (
                                 <div key={item.id} className="bg-slate-50 p-3 rounded-xl border border-gray-200 text-sm space-y-2">
                                     <div className="flex justify-between items-center font-bold text-gray-800">
                                         <span className="flex items-center gap-2 min-w-0">
@@ -2209,39 +2632,54 @@ body.gx-crystal::after { opacity: 1; }
                                             <i className="fas fa-trash"></i>
                                         </button>
                                     </div>
-                                    
+
                                     <div className="flex justify-between items-center gap-2">
-                                        {/* แก้ไขราคาขายต่อหน่วย */}
                                         <div className="flex items-center gap-1">
                                             <span className="text-xs text-gray-500">ราคา: ฿</span>
-                                            <input 
-                                                type="number" 
-                                                value={item.price} 
+                                            <input
+                                                type="number"
+                                                value={item.price}
                                                 onChange={e => updateCartPrice(item.id, e.target.value)}
                                                 className="w-20 border rounded-lg px-2 py-1 text-xs font-bold text-blue-700 bg-white"
                                                 title="สามารถเปลี่ยนราคาขายได้"
                                             />
                                         </div>
 
-                                        {/* จำนวน */}
                                         <div className="flex items-center border rounded-lg bg-white">
                                             <button onClick={() => updateCartQty(item.id, -1)} className="px-2 py-0.5 text-xs text-gray-600 hover:bg-gray-100 font-bold">-</button>
                                             <span className="px-2 text-xs font-bold">{item.qty}</span>
                                             <button onClick={() => updateCartQty(item.id, 1)} className="px-2 py-0.5 text-xs text-gray-600 hover:bg-gray-100 font-bold">+</button>
                                         </div>
 
-                                        <div className="font-bold text-gray-800">฿{(item.price * item.qty).toLocaleString()}</div>
+                                        <div className="font-bold text-gray-800">฿{fmtCompact(item.lineTotal)}</div>
+                                    </div>
+
+                                    <div className="flex flex-wrap justify-between items-center text-[11px] pt-1 border-t border-gray-200 text-gray-500">
+                                        <span>ทุน ฿{fmtCompact(item.costTotal)}{item.lineVat > 0 ? ` · VAT ฿${fmtCompact(item.lineVat)}` : ''}</span>
+                                        <span className={`font-bold ${item.profit >= 0 ? 'text-purple-700' : 'text-red-600'}`}>กำไร {item.profit >= 0 ? '+' : ''}฿{fmtCompact(item.profit)}</span>
                                     </div>
                                 </div>
                             ))}
                         </div>
 
-                        <div className="p-4 border-t bg-slate-50 rounded-b-2xl">
-                            <div className="flex justify-between text-xl font-bold mb-4">
+                        <div className="p-4 border-t bg-slate-50 rounded-b-2xl space-y-1.5">
+                            {cartVatMode !== 'none' && (
+                                <div className="text-xs text-gray-600 space-y-1 pb-1 border-b">
+                                    <div className="flex justify-between"><span>มูลค่าก่อน VAT</span><span>฿{fmtMoney(cartCalc.subtotal)}</span></div>
+                                    <div className="flex justify-between text-blue-700 font-semibold"><span>ภาษีมูลค่าเพิ่ม (VAT {vatRate}%)</span><span>฿{fmtMoney(cartCalc.vat)}</span></div>
+                                </div>
+                            )}
+                            <div className="flex justify-between text-xl font-bold">
                                 <span>รวมทั้งหมด</span>
-                                <span className="text-blue-600">฿{cart.reduce((sum, item) => sum + (item.price * item.qty), 0).toLocaleString()}</span>
+                                <span className="text-blue-600">฿{fmtCompact(cartCalc.total)}</span>
                             </div>
-                            <button onClick={checkout} disabled={cart.length === 0} className="w-full bg-blue-600 text-white font-bold py-3.5 rounded-xl hover:bg-blue-700 disabled:bg-gray-300 transition text-lg shadow-md transform active:scale-95">รับเงิน (Checkout)</button>
+                            {cartCalc.items.length > 0 && (
+                                <div className="flex justify-between text-xs text-gray-500 pb-2">
+                                    <span>ต้นทุนรวม ฿{fmtCompact(cartCalc.totalCost)}</span>
+                                    <span className={`font-bold ${cartCalc.totalProfit >= 0 ? 'text-purple-700' : 'text-red-600'}`}>กำไรบิลนี้ {cartCalc.totalProfit >= 0 ? '+' : ''}฿{fmtCompact(cartCalc.totalProfit)}</span>
+                                </div>
+                            )}
+                            <button onClick={checkout} disabled={cart.length === 0} className="w-full bg-blue-600 text-white font-bold py-3.5 rounded-xl hover:bg-blue-700 disabled:bg-gray-300 transition text-lg shadow-md transform active:scale-95">รับเงิน & พิมพ์ใบเสร็จ (Checkout)</button>
                         </div>
                     </div>
                     {galleryItem && <ImageGallery item={galleryItem} onClose={() => setGalleryItem(null)} />}
@@ -2261,6 +2699,13 @@ body.gx-crystal::after { opacity: 1; }
             const [toastMessage, setToastMessage] = useState('');
             
             const [printConfig, setPrintConfig] = useState(null);
+            const [taxConfig, setTaxConfig] = useState(loadTaxConfig);
+            const [showTaxModal, setShowTaxModal] = useState(false);
+            const handleSaveTaxConfig = (nextCfg) => {
+                setTaxConfig(nextCfg);
+                saveTaxConfig(nextCfg);
+                showToast('บันทึกการตั้งค่าข้อมูลร้านและภาษีแล้ว');
+            };
 
             const [inventory, setInventory] = useState([]);
             const [transactions, setTransactions] = useState([]);
@@ -2397,7 +2842,7 @@ body.gx-crystal::after { opacity: 1; }
 
             const showToast = (msg) => setToastMessage(msg);
             
-            const addTransaction = (type, detail, amount = 0, qty = '-', ref = '', note = '', profit = null, sku = '') => {
+            const addTransaction = (type, detail, amount = 0, qty = '-', ref = '', note = '', profit = null, sku = '', cost = null, vat = 0) => {
                 setTransactions(prev => [{ 
                     id: nextTs(), 
                     date: new Date().toLocaleString('th-TH'), 
@@ -2405,11 +2850,13 @@ body.gx-crystal::after { opacity: 1; }
                     type, 
                     detail, 
                     amount,
+                    cost,
+                    vat,
                     qty,
                     ref,
                     sku,
                     note,
-                    profit // กำไร = ราคาขาย - ราคาทุน (เฉพาะรายการซื้อขายสินค้า), null = ไม่ใช่รายการขายสินค้า
+                    profit // กำไรสุทธิของรายการ = (ราคาขายก่อน VAT - ต้นทุน) หรือ ดอกเบี้ยรับ
                 }, ...prev]);
             };
 
@@ -2439,44 +2886,72 @@ body.gx-crystal::after { opacity: 1; }
                     {/* Print Template A4 */}
                     {printConfig && (
                         <div className="hidden print:block absolute top-0 left-0 w-full bg-white text-black p-8 z-50 min-h-screen">
-                            {printConfig.type === 'repair' && (
+                            {printConfig.type === 'repair' && (() => {
+                                const rd = printConfig.data;
+                                const rMode = rd.vatMode || taxConfig.vatMode || 'none';
+                                const rRate = rd.vatRate || taxConfig.vatRate || 7;
+                                const v = (rd.total !== undefined && rd.vat !== undefined)
+                                    ? { base: rd.subtotal, vat: rd.vat, total: rd.total }
+                                    : calcVat(rd.price || 0, rMode, rRate);
+                                const hasVat = rMode !== 'none';
+                                return (
                                 <div className="max-w-3xl mx-auto border p-8 rounded-xl shadow-none">
                                     <div className="text-center border-b pb-4 mb-6">
-                                        <img src={LOGO_SRC} alt="GP Mobile shop" className="h-20 w-auto mx-auto mb-2 object-contain" />
-                                        <h1 className="text-3xl font-bold">ใบเสร็จรับเงิน / ใบส่งมอบงานซ่อม</h1>
-                                        <h2 className="text-xl font-bold mt-2">GP Mobile shop PRO</h2>
-                                        <p className="text-gray-600 mt-1">เบอร์โทร: 093-014-5788 | Line: @372ipazw</p>
+                                        <img src={LOGO_SRC} alt={taxConfig.shopName} className="h-20 w-auto mx-auto mb-2 object-contain" />
+                                        <h1 className="text-2xl font-bold">{hasVat ? 'ใบเสร็จรับเงิน / ใบกำกับภาษี / ใบส่งมอบงานซ่อม' : 'ใบเสร็จรับเงิน / ใบส่งมอบงานซ่อม'}</h1>
+                                        <h2 className="text-xl font-bold mt-1">{taxConfig.shopName} {taxConfig.branch ? `(${taxConfig.branch})` : ''}</h2>
+                                        {taxConfig.address && <p className="text-xs text-gray-600 mt-1">{taxConfig.address}</p>}
+                                        <p className="text-sm text-gray-600 mt-1">
+                                            {taxConfig.taxId ? `เลขประจำตัวผู้เสียภาษี: ${taxConfig.taxId} | ` : ''}เบอร์โทร: {taxConfig.phone} | Line: {taxConfig.line}
+                                        </p>
                                     </div>
-                                    <div className="flex justify-between mb-8">
+                                    <div className="flex justify-between mb-6 text-sm">
                                         <div>
-                                            <p className="mb-1"><strong>ชื่อลูกค้า:</strong> {printConfig.data.name}</p>
-                                            <p className="mb-1"><strong>เบอร์โทร:</strong> {printConfig.data.phone}</p>
-                                            <p><strong>วันที่ทำรายการ:</strong> {printConfig.data.date}</p>
+                                            <p className="mb-1"><strong>ชื่อลูกค้า:</strong> {rd.name}</p>
+                                            <p className="mb-1"><strong>เบอร์โทร:</strong> {rd.phone}</p>
+                                            <p><strong>วันที่ทำรายการ:</strong> {rd.date}</p>
                                         </div>
                                         <div className="text-right">
-                                            <p className="text-lg"><strong>เลขที่บิล:</strong> {printConfig.data.id}</p>
+                                            <p className="text-base"><strong>เลขที่บิล:</strong> {rd.id}</p>
                                         </div>
                                     </div>
-                                    <table className="w-full text-left border-collapse mb-8">
+                                    <table className="w-full text-left border-collapse mb-6 text-sm">
                                         <thead>
-                                            <tr className="border-b-2 border-black"><th className="py-2">รายการ</th><th className="py-2">รุ่นเครื่อง</th><th className="py-2 text-right">ราคา (บาท)</th></tr>
+                                            <tr className="border-b-2 border-black">
+                                                <th className="py-2">รายการ</th>
+                                                <th className="py-2">รุ่นเครื่อง</th>
+                                                {hasVat && <th className="py-2 text-right">ก่อน VAT</th>}
+                                                {hasVat && <th className="py-2 text-right">VAT {rRate}%</th>}
+                                                <th className="py-2 text-right">รวม (บาท)</th>
+                                            </tr>
                                         </thead>
                                         <tbody>
                                             <tr className="border-b">
                                                 <td className="py-4">
-                                                    ซ่อมมือถือ - อาการ: {printConfig.data.issue}
-                                                    <br/><span className="text-sm text-gray-500">อะไหล่ที่ใช้: {printConfig.data.partName}</span>
+                                                    ซ่อมมือถือ - อาการ: {rd.issue}
+                                                    <br/><span className="text-xs text-gray-500">อะไหล่ที่ใช้: {rd.partName}</span>
                                                 </td>
-                                                <td className="py-4">{printConfig.data.model}</td><td className="py-4 text-right font-bold">฿{printConfig.data.price.toLocaleString()}</td>
+                                                <td className="py-4">{rd.model}</td>
+                                                {hasVat && <td className="py-4 text-right">{fmtMoney(v.base)}</td>}
+                                                {hasVat && <td className="py-4 text-right">{fmtMoney(v.vat)}</td>}
+                                                <td className="py-4 text-right font-bold">{fmtMoney(v.total)}</td>
                                             </tr>
                                         </tbody>
                                     </table>
-                                    <div className="flex justify-between items-end mt-32">
+                                    <div className="flex justify-between items-end mb-20">
+                                        <div className="text-sm text-gray-700 bg-gray-50 px-3 py-2 rounded border">({thaiBahtText(v.total)})</div>
+                                        <div className="w-72 text-sm space-y-1">
+                                            {hasVat && <div className="flex justify-between"><span>มูลค่าบริการก่อนภาษีมูลค่าเพิ่ม</span><span>฿{fmtMoney(v.base)}</span></div>}
+                                            {hasVat && <div className="flex justify-between"><span>ภาษีมูลค่าเพิ่ม {rRate}%</span><span>฿{fmtMoney(v.vat)}</span></div>}
+                                            <div className="flex justify-between text-lg font-bold border-t border-black pt-1"><span>รวมทั้งสิ้น</span><span>฿{fmtMoney(v.total)}</span></div>
+                                        </div>
+                                    </div>
+                                    <div className="flex justify-between items-end">
                                         <div className="text-center w-48 border-t border-black pt-2"><p className="text-sm">ผู้รับเงิน / ผู้ส่งมอบงาน</p></div>
                                         <div className="text-center w-48 border-t border-black pt-2"><p className="text-sm">ลูกค้าผู้รับมอบเครื่อง</p></div>
                                     </div>
-                                </div>
-                            )}
+                                </div>);
+                            })()}
 
                             {printConfig.type === 'pawn' && (() => {
                                 const pp = printConfig.data; const sm = pawnSummary(pp); const baht = (n) => '฿' + (Number(n) || 0).toLocaleString();
@@ -2517,106 +2992,198 @@ body.gx-crystal::after { opacity: 1; }
                                 </div>);
                             })()}
 
-                            {printConfig.type === 'sale' && (
-                                <div className="max-w-3xl mx-auto p-8">
-                                    <div className="text-center border-b pb-4 mb-6">
-                                        <img src={LOGO_SRC} alt="GP Mobile shop" className="h-20 w-auto mx-auto mb-2 object-contain" />
-                                        <h1 className="text-3xl font-bold">ใบเสร็จรับเงิน</h1>
-                                        <h2 className="text-xl font-bold mt-2">GP Mobile shop</h2>
-                                        <p className="text-gray-600 mt-1">เบอร์โทร: 093-014-5788 | Line: @372ipazw</p>
+                            {printConfig.type === 'sale' && (() => {
+                                const sd = printConfig.data;
+                                const sMode = sd.vatMode || taxConfig.vatMode || 'none';
+                                const sRate = sd.vatRate || taxConfig.vatRate || 7;
+                                const hasVat = sMode !== 'none';
+                                const rows = (sd.items || []).map(it => {
+                                    if (it.lineTotal !== undefined && it.lineVat !== undefined) return it;
+                                    const v = calcVat((Number(it.price) || 0) * (Number(it.qty) || 0), sMode, sRate);
+                                    return { ...it, lineBase: v.base, lineVat: v.vat, lineTotal: v.total };
+                                });
+                                const subtotal = sd.subtotal !== undefined ? sd.subtotal : round2(rows.reduce((s, x) => s + x.lineBase, 0));
+                                const vatTotal = sd.vat !== undefined ? sd.vat : round2(rows.reduce((s, x) => s + x.lineVat, 0));
+                                const grandTotal = sd.total !== undefined ? sd.total : round2(rows.reduce((s, x) => s + x.lineTotal, 0));
+                                const isFullTax = hasVat && sd.customer && (sd.customer.name || sd.customer.taxId);
+                                const docTitle = !hasVat ? 'ใบเสร็จรับเงิน' : (isFullTax ? 'ใบเสร็จรับเงิน / ใบกำกับภาษี' : 'ใบเสร็จรับเงิน / ใบกำกับภาษีอย่างย่อ (ABB)');
+                                return (
+                                <div className="max-w-3xl mx-auto p-8 border rounded-xl">
+                                    <div className="text-center border-b pb-4 mb-5">
+                                        <img src={LOGO_SRC} alt={taxConfig.shopName} className="h-20 w-auto mx-auto mb-2 object-contain" />
+                                        <h1 className="text-2xl font-bold">{docTitle}</h1>
+                                        <h2 className="text-lg font-bold mt-1">{taxConfig.shopName} {taxConfig.branch ? `(${taxConfig.branch})` : ''}</h2>
+                                        {taxConfig.address && <p className="text-xs text-gray-600 mt-1">{taxConfig.address}</p>}
+                                        <p className="text-sm text-gray-600 mt-1">
+                                            {taxConfig.taxId ? `เลขประจำตัวผู้เสียภาษี: ${taxConfig.taxId} | ` : ''}เบอร์โทร: {taxConfig.phone} | Line: {taxConfig.line}
+                                        </p>
                                     </div>
-                                    <div className="flex justify-between mb-6">
-                                        <p><strong>วันที่:</strong> {new Date(printConfig.data.date).toLocaleString('th-TH')}</p>
-                                        <p><strong>เลขที่บิล:</strong> {printConfig.data.id}</p>
+                                    <div className="flex justify-between mb-4 text-sm">
+                                        <div>
+                                            <p><strong>วันที่:</strong> {new Date(sd.date).toLocaleString('th-TH')}</p>
+                                            {hasVat && <p className="text-xs text-gray-500">{sMode === 'included' ? `ราคารวมภาษีมูลค่าเพิ่ม ${sRate}% (VAT Included)` : `ภาษีมูลค่าเพิ่ม ${sRate}% แยกนอก (VAT Excluded)`}</p>}
+                                        </div>
+                                        <div className="text-right">
+                                            <p><strong>เลขที่บิล:</strong> {sd.id}</p>
+                                        </div>
                                     </div>
-                                    <table className="w-full text-left border-collapse mb-6">
+                                    {sd.customer && (sd.customer.name || sd.customer.taxId || sd.customer.address) && (
+                                        <div className="mb-4 p-3 border rounded-lg text-sm bg-gray-50">
+                                            <div><strong>ลูกค้า:</strong> {sd.customer.name || '-'}</div>
+                                            {sd.customer.taxId && <div><strong>เลขประจำตัวผู้เสียภาษี:</strong> <span className="font-mono">{sd.customer.taxId}</span></div>}
+                                            {sd.customer.address && <div><strong>ที่อยู่:</strong> {sd.customer.address}</div>}
+                                        </div>
+                                    )}
+                                    <table className="w-full text-left border-collapse mb-6 text-sm">
                                         <thead>
-                                            <tr className="border-b-2 border-black"><th className="py-2">#</th><th className="py-2">รายการ</th><th className="py-2 text-right">จำนวน</th><th className="py-2 text-right">ราคา/หน่วย</th><th className="py-2 text-right">รวม (บาท)</th></tr>
+                                            <tr className="border-b-2 border-black">
+                                                <th className="py-2">#</th>
+                                                <th className="py-2">รายการ</th>
+                                                <th className="py-2 text-right">จำนวน</th>
+                                                <th className="py-2 text-right">ราคา/หน่วย</th>
+                                                {hasVat && <th className="py-2 text-right">ก่อน VAT</th>}
+                                                {hasVat && <th className="py-2 text-right">VAT {sRate}%</th>}
+                                                <th className="py-2 text-right">รวม (บาท)</th>
+                                            </tr>
                                         </thead>
                                         <tbody>
-                                            {printConfig.data.items.map((it, i) => (
-                                                <tr key={it.id} className="border-b">
+                                            {rows.map((it, i) => (
+                                                <tr key={it.id || i} className="border-b">
                                                     <td className="py-3">{i + 1}</td>
-                                                    <td className="py-3">{it.name}<div className="text-xs text-gray-500">{it.sku}</div></td>
+                                                    <td className="py-3">{it.name}<div className="text-xs text-gray-500 font-mono">{it.sku}</div></td>
                                                     <td className="py-3 text-right">{it.qty}</td>
-                                                    <td className="py-3 text-right">฿{it.price.toLocaleString()}</td>
-                                                    <td className="py-3 text-right font-bold">฿{(it.price * it.qty).toLocaleString()}</td>
+                                                    <td className="py-3 text-right">{fmtMoney(it.price)}</td>
+                                                    {hasVat && <td className="py-3 text-right">{fmtMoney(it.lineBase)}</td>}
+                                                    {hasVat && <td className="py-3 text-right">{fmtMoney(it.lineVat)}</td>}
+                                                    <td className="py-3 text-right font-bold">{fmtMoney(it.lineTotal)}</td>
                                                 </tr>
                                             ))}
                                         </tbody>
                                     </table>
-                                    <div className="flex justify-end text-2xl font-bold mb-24"><span className="mr-8">รวมทั้งสิ้น</span><span>฿{printConfig.data.total.toLocaleString()}</span></div>
+                                    <div className="flex justify-between items-end mb-20">
+                                        <div className="text-sm text-gray-700 bg-gray-50 px-3 py-2 rounded border">({thaiBahtText(grandTotal)})</div>
+                                        <div className="w-72 text-sm space-y-1">
+                                            {hasVat && <div className="flex justify-between"><span>มูลค่าสินค้าก่อนภาษีมูลค่าเพิ่ม</span><span>฿{fmtMoney(subtotal)}</span></div>}
+                                            {hasVat && <div className="flex justify-between"><span>ภาษีมูลค่าเพิ่ม {sRate}%</span><span>฿{fmtMoney(vatTotal)}</span></div>}
+                                            <div className="flex justify-between text-xl font-bold border-t border-black pt-1"><span>รวมทั้งสิ้น</span><span>฿{fmtMoney(grandTotal)}</span></div>
+                                        </div>
+                                    </div>
                                     <div className="flex justify-between">
                                         <div className="text-center w-48 border-t border-black pt-2 text-sm">ผู้รับเงิน</div>
                                         <div className="text-center w-48 border-t border-black pt-2 text-sm">ลูกค้า</div>
                                     </div>
-                                </div>
-                            )}
+                                </div>);
+                            })()}
 
                             {printConfig.type === 'transaction' && (() => {
                                 const pd = printConfig.data;
-                                const rows = [...(pd.transactions || [])].sort((x, y) => (x._d || 0) - (y._d || 0)); // เรียงตามวันที่ เก่า -> ใหม่ แบบสมุดบัญชี
+                                const rows = [...(pd.transactions || [])].sort((x, y) => (x._d || 0) - (y._d || 0));
                                 const money = (n) => (Number(n) || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
                                 const sum = (arr, f) => arr.reduce((t, r) => t + (Number(r[f]) || 0), 0);
+                                const sumCost = (arr) => arr.reduce((t, r) => t + ((r.kind === 'sale' || r.kind === 'repair' || r.kind === 'pawn_redeem') && r.cost ? Number(r.cost) : 0), 0);
                                 const dstr = (d) => d.toLocaleDateString('th-TH', { day: '2-digit', month: '2-digit', year: 'numeric' });
-                                const tInc = sum(rows, 'inc'), tExp = sum(rows, 'exp'), tProfit = sum(rows, 'profit');
+                                const tCost = sumCost(rows), tInc = sum(rows, 'inc'), tVat = sum(rows, 'vat'), tExp = sum(rows, 'exp'), tProfit = sum(rows, 'profit');
+                                const pnl = pd.pnl || summarizePnL(rows);
                                 const groups = [];
                                 rows.forEach(r => { const k = dayKey(r._d); let g = groups[groups.length - 1]; if (!g || g.k !== k) { g = { k, d: r._d, items: [] }; groups.push(g); } g.items.push(r); });
                                 let no = 0;
                                 return (
                                 <div className="ledger-print">
                                     <div className="flex items-center justify-between border-b-2 border-black pb-3 mb-3">
-                                        <img src={LOGO_SRC} alt="GP Mobile shop" style={{ height: '70px', width: 'auto' }} />
+                                        <img src={LOGO_SRC} alt={taxConfig.shopName} style={{ height: '66px', width: 'auto' }} />
                                         <div className="text-center">
-                                            <h1 style={{ fontSize: '22px', fontWeight: 700 }}>บัญชีรายรับ-รายจ่าย</h1>
+                                            <h1 style={{ fontSize: '20px', fontWeight: 700 }}>บัญชีรายรับ-รายจ่าย และสรุปกำไรขาดทุน</h1>
                                             <div style={{ fontSize: '13px', fontWeight: 600 }}>ประจำเดือน {pd.monthStr}{pd.tabLabel ? ` (${pd.tabLabel})` : ''}</div>
                                         </div>
                                         <div style={{ textAlign: 'right', fontSize: '10px' }}>พิมพ์เมื่อ {new Date().toLocaleString('th-TH')}</div>
                                     </div>
-                                    <div className="grid grid-cols-2 gap-x-8 gap-y-1 mb-3" style={{ fontSize: '12px' }}>
-                                        <div><b>ชื่อกิจการ:</b> GP Mobile shop</div>
-                                        <div><b>เบอร์โทร:</b> 093-014-5788 &nbsp; <b>Line:</b> @372ipazw</div>
-                                        <div><b>ชื่อผู้ประกอบการ:</b> ........................................................</div>
-                                        <div><b>เลขประจำตัวผู้เสียภาษี:</b> ........................................................</div>
+                                    <div className="grid grid-cols-2 gap-x-8 gap-y-1 mb-3" style={{ fontSize: '11px' }}>
+                                        <div><b>ชื่อกิจการ:</b> {taxConfig.shopName} {taxConfig.branch ? `(${taxConfig.branch})` : ''}</div>
+                                        <div><b>เบอร์โทร:</b> {taxConfig.phone} &nbsp; <b>Line:</b> {taxConfig.line}</div>
+                                        <div><b>ที่อยู่:</b> {taxConfig.address || '........................................................................'}</div>
+                                        <div><b>เลขประจำตัวผู้เสียภาษี:</b> {taxConfig.taxId || '........................................................'}</div>
                                     </div>
                                     <table>
                                         <thead>
-                                            <tr><th colSpan={8} style={{ background: '#fff', border: 'none', borderBottom: '1px solid #333', textAlign: 'left', fontSize: '10px', fontWeight: 400 }}>GP Mobile shop · บัญชีรายรับ-รายจ่าย ประจำเดือน {pd.monthStr}</th></tr>
+                                            <tr><th colSpan={10} style={{ background: '#fff', border: 'none', borderBottom: '1px solid #333', textAlign: 'left', fontSize: '10px', fontWeight: 400 }}>{taxConfig.shopName} · บัญชีรายรับ-รายจ่าย (ทุน − ขาย − กำไร) ประจำเดือน {pd.monthStr}</th></tr>
                                             <tr style={{ background: '#e5e7eb' }}>
-                                                <th style={{ width: '4%' }}>ลำดับ</th><th style={{ width: '9%' }}>วัน/เดือน/ปี</th><th style={{ width: '13%' }}>รหัสสินค้า / อ้างอิง</th><th style={{ width: '30%' }}>รายการ</th>
-                                                <th style={{ width: '11%' }}>รายรับ (บาท)</th><th style={{ width: '11%' }}>รายจ่าย (บาท)</th><th style={{ width: '10%' }}>กำไร (บาท)</th><th>หมายเหตุ</th>
+                                                <th style={{ width: '3.5%' }}>ลำดับ</th>
+                                                <th style={{ width: '8%' }}>วัน/เดือน/ปี</th>
+                                                <th style={{ width: '11%' }}>รหัสสินค้า / อ้างอิง</th>
+                                                <th style={{ width: '24%' }}>รายการ</th>
+                                                <th style={{ width: '8.5%' }}>ต้นทุน (บาท)</th>
+                                                <th style={{ width: '9.5%' }}>รายรับ/ขาย</th>
+                                                <th style={{ width: '7.5%' }}>VAT 7%</th>
+                                                <th style={{ width: '9%' }}>รายจ่าย</th>
+                                                <th style={{ width: '8.5%' }}>กำไร (บาท)</th>
+                                                <th>หมายเหตุ</th>
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {groups.length === 0 && <tr><td colSpan={8} style={{ textAlign: 'center', padding: '16px' }}>ไม่มีรายการในเดือนนี้</td></tr>}
+                                            {groups.length === 0 && <tr><td colSpan={10} style={{ textAlign: 'center', padding: '16px' }}>ไม่มีรายการในเดือนนี้</td></tr>}
                                             {groups.map(g => (
                                                 <React.Fragment key={g.k}>
                                                     {g.items.map((r, i) => { no += 1; return (
                                                         <tr key={i}>
                                                             <td style={{ textAlign: 'center' }}>{no}</td>
                                                             <td style={{ whiteSpace: 'nowrap' }}>{dstr(r._d)}<div style={{ fontSize: '9px', color: '#555' }}>{r._d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.</div></td>
-                                                            <td style={{ fontFamily: 'monospace', fontSize: '10px' }}>{r._sku && <div><b>{r._sku}</b></div>}<div>{r.ref || ''}</div></td>
+                                                            <td style={{ fontFamily: 'monospace', fontSize: '9.5px' }}>{r._sku && <div><b>{r._sku}</b></div>}<div>{r.ref || ''}</div></td>
                                                             <td>{r.detail}{r.qty && r.qty !== '-' ? ` (x${r.qty})` : ''}</td>
-                                                            <td className="num">{r.inc ? money(r.inc) : ''}</td>
+                                                            <td className="num">{(r.kind === 'sale' || r.kind === 'repair' || r.kind === 'pawn_redeem') && r.cost !== null ? money(r.cost) : ''}</td>
+                                                            <td className="num">{r.inc ? money(r.inc) : (r.kind === 'sale' ? '0.00' : '')}</td>
+                                                            <td className="num">{r.vat ? money(r.vat) : ''}</td>
                                                             <td className="num">{r.exp ? money(r.exp) : ''}</td>
-                                                            <td className="num">{r.profit ? money(r.profit) : ''}</td>
-                                                            <td style={{ fontSize: '10px' }}>{r.note || ''}</td>
+                                                            <td className="num">{(r.profit !== null && r.profit !== undefined) ? money(r.profit) : ''}</td>
+                                                            <td style={{ fontSize: '9.5px' }}>{r.note || ''}</td>
                                                         </tr>); })}
                                                     <tr style={{ background: '#f3f4f6', fontWeight: 700 }}>
                                                         <td colSpan={4} style={{ textAlign: 'right' }}>รวมวันที่ {dstr(g.d)} ({g.items.length} รายการ)</td>
-                                                        <td className="num">{money(sum(g.items, 'inc'))}</td><td className="num">{money(sum(g.items, 'exp'))}</td><td className="num">{money(sum(g.items, 'profit'))}</td>
-                                                        <td style={{ fontSize: '10px' }}>สุทธิ {money(sum(g.items, 'inc') - sum(g.items, 'exp'))}</td>
+                                                        <td className="num">{money(sumCost(g.items))}</td>
+                                                        <td className="num">{money(sum(g.items, 'inc'))}</td>
+                                                        <td className="num">{money(sum(g.items, 'vat'))}</td>
+                                                        <td className="num">{money(sum(g.items, 'exp'))}</td>
+                                                        <td className="num">{money(sum(g.items, 'profit'))}</td>
+                                                        <td style={{ fontSize: '9.5px' }}>รับ−จ่าย {money(sum(g.items, 'inc') - sum(g.items, 'exp'))}</td>
                                                     </tr>
                                                 </React.Fragment>
                                             ))}
-                                            <tr style={{ background: '#d1d5db', fontWeight: 700, fontSize: '12px' }}>
+                                            <tr style={{ background: '#d1d5db', fontWeight: 700, fontSize: '11.5px' }}>
                                                 <td colSpan={4} style={{ textAlign: 'right' }}>รวมทั้งเดือน {pd.monthStr} ({rows.length} รายการ)</td>
-                                                <td className="num">{money(tInc)}</td><td className="num">{money(tExp)}</td><td className="num">{money(tProfit)}</td>
-                                                <td style={{ fontSize: '10px' }}>สุทธิ (รับ − จ่าย) {money(tInc - tExp)}</td>
+                                                <td className="num">{money(tCost)}</td>
+                                                <td className="num">{money(tInc)}</td>
+                                                <td className="num">{money(tVat)}</td>
+                                                <td className="num">{money(tExp)}</td>
+                                                <td className="num">{money(tProfit)}</td>
+                                                <td style={{ fontSize: '9.5px' }}>รับ−จ่าย {money(tInc - tExp)}</td>
                                             </tr>
                                         </tbody>
                                     </table>
-                                    <div className="flex justify-between" style={{ marginTop: '36px', fontSize: '12px', breakInside: 'avoid' }}>
+
+                                    {/* สรุปงบกำไรขาดทุนเบื้องต้นประจำเดือน */}
+                                    <div style={{ marginTop: '14px', breakInside: 'avoid' }}>
+                                        <div style={{ fontWeight: 700, fontSize: '12px', marginBottom: '4px' }}>สรุปงบกำไรขาดทุนทางบัญชี & ภาษีขาย ประจำเดือน {pd.monthStr} (ทั้งเดือน)</div>
+                                        <table>
+                                            <tbody>
+                                                <tr>
+                                                    <td style={{ width: '25%' }}><b>ยอดขาย/งานซ่อม (ก่อน VAT)</b></td><td className="num" style={{ width: '15%' }}>{money(pnl.salesBase)}</td>
+                                                    <td style={{ width: '25%' }}><b>ดอกเบี้ยรับจำนำ (ต่อดอก/ไถ่)</b></td><td className="num" style={{ width: '15%' }}>{money(pnl.pawnInterest)}</td>
+                                                    <td style={{ width: '12%' }}><b>ภาษีขาย VAT 7%</b></td><td className="num" style={{ width: '8%' }}>{money(pnl.totalVatOut)}</td>
+                                                </tr>
+                                                <tr>
+                                                    <td><b>หัก ต้นทุนขาย / อะไหล่ (COGS)</b></td><td className="num">{money(pnl.totalCOGS)}</td>
+                                                    <td><b>หัก ค่าใช้จ่ายดำเนินงานอื่น</b></td><td className="num">{money(pnl.operatingExpense)}</td>
+                                                    <td><b>ซื้อสต็อก (สินทรัพย์)</b></td><td className="num">{money(pnl.stockBuyExpense)}</td>
+                                                </tr>
+                                                <tr style={{ background: '#e5e7eb', fontWeight: 700 }}>
+                                                    <td>กำไรขั้นต้น (ขาย − ต้นทุน)</td><td className="num">{money(pnl.grossProfit)}</td>
+                                                    <td>กำไรสุทธิทางบัญชี (รวมดอกเบี้ย)</td><td className="num">{money(pnl.trueNetProfit)}</td>
+                                                    <td>ปล่อยจำนำ (ลูกหนี้)</td><td className="num">{money(pnl.pawnOutExpense)}</td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+
+                                    <div className="flex justify-between" style={{ marginTop: '28px', fontSize: '12px', breakInside: 'avoid' }}>
                                         <div style={{ textAlign: 'center', width: '260px' }}><div style={{ borderTop: '1px solid #000', paddingTop: '4px' }}>ผู้จัดทำบัญชี</div><div style={{ fontSize: '10px', marginTop: '2px' }}>วันที่ ......../......../........</div></div>
                                         <div style={{ textAlign: 'center', width: '260px' }}><div style={{ borderTop: '1px solid #000', paddingTop: '4px' }}>เจ้าของกิจการ (ลงชื่อรับรองความถูกต้อง)</div><div style={{ fontSize: '10px', marginTop: '2px' }}>วันที่ ......../......../........</div></div>
                                     </div>
@@ -2705,11 +3272,12 @@ body.gx-crystal::after { opacity: 1; }
                                 <div className="max-w-7xl mx-auto h-full pb-20">
                                     {activeTab === 'dashboard' && <DashboardTab inventory={inventory} pawns={pawns} repairs={repairs} sales={sales} transactions={transactions} />}
                                     {activeTab === 'inventory' && <InventoryTab sales={sales} inventory={inventory} setInventory={setInventory} userRole={userRole} addTransaction={addTransaction} showToast={showToast} onPrint={handlePrint} />}
-                                    {activeTab === 'repair' && <RepairTab repairs={repairs} setRepairs={setRepairs} inventory={inventory} setInventory={setInventory} addTransaction={addTransaction} showToast={showToast} onPrint={handlePrint} />}
+                                    {activeTab === 'repair' && <RepairTab repairs={repairs} setRepairs={setRepairs} inventory={inventory} setInventory={setInventory} addTransaction={addTransaction} showToast={showToast} onPrint={handlePrint} taxConfig={taxConfig} />}
                                     {activeTab === 'pawn' && <PawnTab onPrint={handlePrint} pawns={pawns} setPawns={setPawns} setTransactions={setTransactions} showToast={showToast} addTransaction={addTransaction} />}
                                     {activeTab === 'crm' && <CRMTab repairs={repairs} pawns={pawns} onPrintRepair={handlePrint} />}
-                                    {activeTab === 'transactions' && <TransactionTab inventory={inventory} sales={sales} transactions={transactions} setTransactions={setTransactions} showToast={showToast} onPrint={handlePrint} />}
-                                    {activeTab === 'pos' && <POSTab inventory={inventory} setInventory={setInventory} addTransaction={addTransaction} addSale={s => setSales([...sales, s])} showToast={showToast} onPrint={handlePrint} />}
+                                    {activeTab === 'transactions' && <TransactionTab inventory={inventory} sales={sales} transactions={transactions} setTransactions={setTransactions} showToast={showToast} onPrint={handlePrint} taxConfig={taxConfig} onOpenTaxSettings={() => setShowTaxModal(true)} />}
+                                    {activeTab === 'pos' && <POSTab inventory={inventory} setInventory={setInventory} addTransaction={addTransaction} addSale={s => setSales([...sales, s])} showToast={showToast} onPrint={handlePrint} taxConfig={taxConfig} onOpenTaxSettings={() => setShowTaxModal(true)} />}
+                                    {showTaxModal && <TaxSettingsModal taxConfig={taxConfig} onSave={handleSaveTaxConfig} onClose={() => setShowTaxModal(false)} />}
                                 </div>
                             </div>
                         </main>
